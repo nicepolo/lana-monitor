@@ -82,6 +82,43 @@ def vol_ratio(volumes):
     p = sum(volumes[-14:-7]) / 7
     return round(r / p, 2) if p else None
 
+def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks):
+    """LANA Score 0-100 綜合評分"""
+    # 趨勢 25分
+    if ma7 and ma30 and ma120 and ma7 > ma30 > ma120:
+        s_trend = 25
+    elif ma7 and ma30 and ma7 > ma30:
+        s_trend = 15
+    else:
+        s_trend = 5
+    # RSI 20分
+    if rsi_val is None:          s_rsi = 10
+    elif 50 <= rsi_val < 70:     s_rsi = 20
+    elif 40 <= rsi_val < 50:     s_rsi = 15
+    elif 30 <= rsi_val < 40:     s_rsi = 10
+    elif 70 <= rsi_val < 80:     s_rsi = 8
+    else:                        s_rsi = 0
+    # 量能 20分
+    if vr is None:   s_vol = 10
+    elif vr >= 2.0:  s_vol = 20
+    elif vr >= 1.5:  s_vol = 16
+    elif vr >= 1.0:  s_vol = 12
+    elif vr >= 0.8:  s_vol = 6
+    else:            s_vol = 0
+    # BB位置 15分
+    s_bb = {'lower_half': 15, 'below_lower': 12, 'upper_half': 8, 'above_upper': 0}.get(bb_pos, 8)
+    # 風險 20分
+    s_risk = [20, 15, 8, 2, 0][min(len(risks), 4)]
+    total = s_trend + s_rsi + s_vol + s_bb + s_risk
+    return {
+        "total":  max(0, min(100, total)),
+        "trend":  s_trend,
+        "rsi":    s_rsi,
+        "vol":    s_vol,
+        "bb":     s_bb,
+        "risk":   s_risk
+    }
+
 # ── Binance API 抓取 ─────────────────────────────────────────
 def _get(url, params=None, timeout=15):
     """帶 fallback 的 GET，先試 CDN endpoint，失敗再試原始 endpoint"""
@@ -200,6 +237,19 @@ def analyze_coin(coin):
     n = len(risks)
     risk_level = "extreme" if n >= 4 else "high" if n >= 3 else "medium" if n >= 2 else "low" if n >= 1 else "safe"
 
+    bb_pos = (
+        "above_upper" if bb_up and price > bb_up else
+        "upper_half"  if bb_up and bb_mid and price > bb_mid else
+        "lower_half"  if bb_lo and bb_mid and price > bb_lo else
+        "below_lower"
+    )
+    ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+    ls_grade = ("💎 極強" if ls["total"] >= 80 else
+                "🟢 強"   if ls["total"] >= 65 else
+                "🟡 普通" if ls["total"] >= 50 else
+                "🟠 弱"   if ls["total"] >= 35 else
+                "🔴 危險")
+
     return {
         "coin": coin.upper(),
         "symbol": symbol,
@@ -218,18 +268,16 @@ def analyze_coin(coin):
         "bb_upper": bb_up,
         "bb_mid": bb_mid,
         "bb_lower": bb_lo,
-        "bb_position": (
-            "above_upper" if bb_up and price > bb_up else
-            "upper_half"  if bb_up and bb_mid and price > bb_mid else
-            "lower_half"  if bb_lo and bb_mid and price > bb_lo else
-            "below_lower"
-        ),
+        "bb_position": bb_pos,
         "vol_ratio": vr,
         "funding_rate": round(funding * 100, 5) if funding is not None else None,
         "global_ls": round(gl_ls, 3) if gl_ls else None,
         "top_ls":    round(top_ls, 3) if top_ls else None,
         "risks": risks,
         "risk_level": risk_level,
+        "lana_score":  ls["total"],
+        "lana_grade":  ls_grade,
+        "lana_detail": ls,
         "support1": round(price * 0.75, 6),
         "support2": round(ma30, 6) if ma30 else round(price * 0.85, 6),
         "resistance": round(bb_up, 6) if bb_up else round(price * 1.15, 6),

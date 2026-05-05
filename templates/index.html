@@ -52,6 +52,22 @@
   .down { background: rgba(246,70,93,.15); color: var(--red); }
   .neutral { background: rgba(132,142,156,.15); color: var(--muted); }
 
+  /* ── LANA Score ── */
+  .ls-card { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 1px solid rgba(255,200,0,0.25); margin-bottom: 12px; }
+  .ls-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .ls-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
+  .ls-grade { font-size: 17px; font-weight: 700; }
+  .ls-score-wrap { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .ls-score-num { font-size: 56px; font-weight: 900; line-height: 1; }
+  .ls-bar-wrap { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+  .ls-bar { height: 100%; border-radius: 4px; transition: width 0.8s ease; }
+  .ls-breakdown { display: flex; flex-direction: column; gap: 7px; }
+  .ls-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .ls-item-label { width: 52px; color: var(--muted); flex-shrink: 0; }
+  .ls-mini-bar { flex: 1; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+  .ls-mini-bar div { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
+  .ls-item-val { width: 36px; text-align: right; color: var(--muted); flex-shrink: 0; }
+
   /* ── Risk Badge ── */
   .risk-banner { padding: 10px 16px; font-size: 13px; font-weight: 600; text-align: center; }
   .risk-safe    { background: rgba(14,203,129,.12); color: var(--green); }
@@ -407,6 +423,10 @@ function renderAnalysis(d) {
   // Build plain text report for email
   const reportText = buildReportText(d);
 
+  // LANA Score color
+  const lsColor = d.lana_score >= 80 ? '#FFD700' : d.lana_score >= 65 ? '#0ecb81' : d.lana_score >= 50 ? '#f0b90b' : d.lana_score >= 35 ? '#FF8C00' : '#f6465d';
+  const ld = d.lana_detail || {};
+
   document.getElementById("analyzeResult").innerHTML = `
   <div class="price-hero">
     <div class="coin-name">${d.coin} / USDT</div>
@@ -416,6 +436,28 @@ function renderAnalysis(d) {
   <div class="risk-banner risk-${d.risk_level}">${riskLabels[d.risk_level] || d.risk_level}</div>
 
   <div class="content">
+    <!-- LANA Score -->
+    <div class="card ls-card">
+      <div class="ls-header">
+        <span class="ls-label">LANA Score</span>
+        <span class="ls-grade">${d.lana_grade || '—'}</span>
+      </div>
+      <div class="ls-score-wrap">
+        <div class="ls-score-num" style="color:${lsColor}">${d.lana_score ?? '—'}</div>
+        <div style="flex:1">
+          <div class="ls-bar-wrap"><div class="ls-bar" style="width:${d.lana_score}%;background:${lsColor}"></div></div>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:right">/100</div>
+        </div>
+      </div>
+      <div class="ls-breakdown">
+        <div class="ls-item"><span class="ls-item-label">趨勢</span><div class="ls-mini-bar"><div style="width:${(ld.trend||0)/25*100}%;background:#3b82f6"></div></div><span class="ls-item-val">${ld.trend??0}/25</span></div>
+        <div class="ls-item"><span class="ls-item-label">RSI</span><div class="ls-mini-bar"><div style="width:${(ld.rsi||0)/20*100}%;background:#f0b90b"></div></div><span class="ls-item-val">${ld.rsi??0}/20</span></div>
+        <div class="ls-item"><span class="ls-item-label">量能</span><div class="ls-mini-bar"><div style="width:${(ld.vol||0)/20*100}%;background:#0ecb81"></div></div><span class="ls-item-val">${ld.vol??0}/20</span></div>
+        <div class="ls-item"><span class="ls-item-label">BB位置</span><div class="ls-mini-bar"><div style="width:${(ld.bb||0)/15*100}%;background:#a855f7"></div></div><span class="ls-item-val">${ld.bb??0}/15</span></div>
+        <div class="ls-item"><span class="ls-item-label">風險</span><div class="ls-mini-bar"><div style="width:${(ld.risk||0)/20*100}%;background:${(ld.risk||0)>=15?'#0ecb81':'#f6465d'}"></div></div><span class="ls-item-val">${ld.risk??0}/20</span></div>
+      </div>
+    </div>
+
     <!-- 基本數據 -->
     <div class="card">
       <div class="card-header"><h2>📊 基本數據</h2></div>
@@ -517,6 +559,7 @@ function buildReportText(d) {
 【RSI(14)】${d.rsi ?? 'N/A'}  【量能比】${d.vol_ratio ? d.vol_ratio+'x' : 'N/A'}
 【資金費率】${d.funding_rate != null ? d.funding_rate+'%' : 'N/A'}  【散戶多空】${d.global_ls ?? 'N/A'}  【大戶多空】${d.top_ls ?? 'N/A'}
 
+【LANA Score】${d.lana_score ?? '—'}/100  ${d.lana_grade ?? ''}
 【風險評級】${d.risk_level.toUpperCase()}
 ${d.risks.length ? d.risks.map(r=>'- '+r).join('\n') : '- 暫無明顯風險信號'}
 
