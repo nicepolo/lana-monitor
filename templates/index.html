@@ -155,6 +155,37 @@
   .tabs { overflow-x: auto; white-space: nowrap; }
   .tab  { padding: 11px 6px; font-size: 12px; }
 
+  /* ── Risk / Circuit Breaker ── */
+  .risk-card { border-radius:var(--radius); border:2px solid #2b3046; padding:14px 16px; margin:12px 16px 0; }
+  .risk-card.safe    { border-color:rgba(14,203,129,.4); background:rgba(14,203,129,.04); }
+  .risk-card.warning { border-color:rgba(240,185,11,.5); background:rgba(240,185,11,.05); }
+  .risk-card.locked  { border-color:rgba(246,70,93,.6);  background:rgba(246,70,93,.07); }
+  .risk-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .risk-title  { font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .risk-badge  { font-size:13px; font-weight:700; padding:3px 10px; border-radius:10px; }
+  .risk-badge.safe    { background:rgba(14,203,129,.15); color:var(--green); }
+  .risk-badge.warning { background:rgba(240,185,11,.15); color:var(--yellow); }
+  .risk-badge.locked  { background:rgba(246,70,93,.15);  color:var(--red); }
+  .risk-row { display:flex; align-items:center; gap:8px; margin-bottom:7px; font-size:12px; }
+  .risk-row-label { width:80px; color:var(--muted); flex-shrink:0; }
+  .risk-row-bar { flex:1; height:5px; background:rgba(255,255,255,.08); border-radius:3px; overflow:hidden; }
+  .risk-row-bar div { height:100%; border-radius:3px; transition:width .5s; }
+  .risk-row-val { width:70px; text-align:right; font-weight:600; flex-shrink:0; }
+  .risk-lock-msg { margin-top:10px; padding:10px 12px; background:rgba(246,70,93,.1); border-radius:8px; font-size:12px; color:var(--red); line-height:1.6; }
+  .risk-unlock-btn { margin-top:8px; width:100%; background:rgba(246,70,93,.15); color:var(--red); border:1px solid rgba(246,70,93,.3); border-radius:8px; padding:9px; font-size:13px; font-weight:700; cursor:pointer; }
+  .risk-trade-card { background:var(--bg2); border-radius:var(--radius); border:1px solid #2b3046; padding:14px 16px; margin:10px 16px 0; }
+  .risk-trade-title { font-size:13px; font-weight:700; color:var(--text); margin-bottom:12px; }
+  .risk-trade-row { display:flex; gap:8px; margin-bottom:8px; }
+  .risk-trade-row input, .risk-trade-row select { flex:1; background:var(--bg3); border:1px solid #2b3046; border-radius:8px; padding:9px 12px; color:var(--text); font-size:14px; outline:none; }
+  .risk-trade-row input:focus, .risk-trade-row select:focus { border-color:var(--acc); }
+  /* Modal */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:500; align-items:center; justify-content:center; }
+  .modal-overlay.show { display:flex; }
+  .modal-box { background:var(--bg2); border:1px solid #2b3046; border-radius:16px; padding:24px 20px; width:calc(100% - 40px); max-width:360px; }
+  .modal-title { font-size:16px; font-weight:700; margin-bottom:8px; }
+  .modal-desc  { font-size:13px; color:var(--muted); line-height:1.6; margin-bottom:18px; }
+  .modal-btns  { display:flex; gap:10px; }
+
   /* ── Journal ── */
   .jform-card { background:var(--bg2); border-radius:var(--radius); border:1px solid #2b3046; padding:14px 16px; margin:12px 16px 0; }
   .jform-title { font-size:13px; font-weight:700; color:var(--acc); margin-bottom:12px; }
@@ -254,6 +285,61 @@
 
 <!-- ── 交易日誌 ── -->
 <div id="page-journal" class="page">
+  <!-- 風控狀態 -->
+  <div id="riskCard" class="risk-card safe">
+    <div class="risk-header">
+      <span class="risk-title">🛡 風控狀態</span>
+      <span id="riskBadge" class="risk-badge safe">✅ 正常交易</span>
+    </div>
+    <div id="riskStats">
+      <div class="risk-row">
+        <span class="risk-row-label">本週虧損</span>
+        <div class="risk-row-bar"><div id="riskBarWk" style="width:0%;background:var(--green)"></div></div>
+        <span class="risk-row-val" id="riskValWk">—</span>
+      </div>
+      <div class="risk-row">
+        <span class="risk-row-label">連續止損</span>
+        <div class="risk-row-bar"><div id="riskBarCon" style="width:0%;background:var(--green)"></div></div>
+        <span class="risk-row-val" id="riskValCon">—</span>
+      </div>
+      <div class="risk-row">
+        <span class="risk-row-label">今日虧損</span>
+        <div class="risk-row-bar"><div id="riskBarDy" style="width:0%;background:var(--green)"></div></div>
+        <span class="risk-row-val" id="riskValDy">—</span>
+      </div>
+    </div>
+    <div id="riskLockMsg" style="display:none" class="risk-lock-msg"></div>
+    <button id="riskUnlockBtn" style="display:none" class="risk-unlock-btn" onclick="showUnlockModal()">⚠️ 強制解鎖（謹慎使用）</button>
+  </div>
+
+  <!-- 風控設定 -->
+  <div style="padding:6px 16px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:11px;color:var(--muted)">本金</span>
+    <input id="riskCapital" type="number" style="width:90px;background:var(--bg3);border:1px solid #2b3046;border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;outline:none" placeholder="10000" value="10000" onchange="saveRiskSettings()">
+    <span style="font-size:11px;color:var(--muted)">U &nbsp;週限</span>
+    <input id="riskWkPct" type="number" style="width:60px;background:var(--bg3);border:1px solid #2b3046;border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;outline:none" placeholder="10" value="10" onchange="saveRiskSettings()">
+    <span style="font-size:11px;color:var(--muted)">% &nbsp;日限</span>
+    <input id="riskDyPct" type="number" style="width:60px;background:var(--bg3);border:1px solid #2b3046;border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;outline:none" placeholder="5" value="5" onchange="saveRiskSettings()">
+    <span style="font-size:11px;color:var(--muted)">%</span>
+  </div>
+
+  <!-- 回填交易結果 -->
+  <div class="risk-trade-card">
+    <div class="risk-trade-title">📊 回填交易結果</div>
+    <div class="risk-trade-row">
+      <select id="trCoin" style="flex:1">
+        <option value="">— 幣種 —</option>
+      </select>
+      <input id="trPnl" type="number" placeholder="盈虧 USD（正=賺/負=虧）" step="0.01">
+    </div>
+    <div class="risk-trade-row">
+      <input id="trEntry" type="number" placeholder="進場價（選填）" step="any">
+      <input id="trExit"  type="number" placeholder="出場價（選填）" step="any">
+    </div>
+    <input id="trNote" type="text" style="width:100%;background:var(--bg3);border:1px solid #2b3046;border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;margin-bottom:8px" placeholder="備注（選填）">
+    <button class="btn" style="width:100%" onclick="submitTradeResult()">✅ 記錄交易結果</button>
+  </div>
+
   <!-- 新增紀錄表單 -->
   <div class="jform-card">
     <div class="jform-title">✍️ 新增今日觀察</div>
@@ -296,6 +382,21 @@
   </div>
   <div id="journalList" style="padding-bottom:20px">
     <div class="empty"><div class="empty-icon">📔</div>尚無紀錄<br><small style="color:var(--muted)">寫下你今天注意到的幣</small></div>
+  </div>
+</div>
+
+<!-- 強制解鎖 Modal -->
+<div class="modal-overlay" id="unlockModal">
+  <div class="modal-box">
+    <div class="modal-title" style="color:var(--red)">⚠️ 強制解鎖風控</div>
+    <div class="modal-desc">
+      此操作會解除熔斷限制 <b>1 小時</b>，並推播 Telegram 警告。<br><br>
+      熔斷是為了保護你的本金而存在。確定要繼續嗎？
+    </div>
+    <div class="modal-btns">
+      <button class="btn secondary" style="flex:1" onclick="hideUnlockModal()">取消</button>
+      <button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="doForceUnlock()">確認解鎖</button>
+    </div>
   </div>
 </div>
 
@@ -688,8 +789,8 @@ function renderAnalysis(d) {
         </div>
         <div id="posResult"></div>
         <div style="display:flex;gap:8px;margin-top:6px">
-          <button class="btn secondary" style="flex:1;font-size:13px" onclick="copyPosition()">📋 複製</button>
-          <button class="btn" style="flex:1;font-size:13px;background:#F0B90B;color:#000" onclick="openBinance('${d.coin}')">🔗 幣安下單</button>
+          <button id="posCalcCopyBtn" class="btn secondary" style="flex:1;font-size:13px" onclick="copyPosition()">📋 複製</button>
+          <button id="posCalcBinanceBtn" class="btn" style="flex:1;font-size:13px;background:#F0B90B;color:#000" onclick="openBinance('${d.coin}')">🔗 幣安下單</button>
         </div>
         <div style="font-size:10px;color:var(--muted);margin-top:6px;text-align:center">⚠️ 計算結果僅供參考，實際下單請在幣安手動確認</div>
       </div>
@@ -703,8 +804,8 @@ function renderAnalysis(d) {
 
     <div style="font-size:11px;color:var(--muted);text-align:center;padding-bottom:8px">⚠️ 僅供觀察，不構成投資建議 | ${d.ts}</div>
   </div>`;
-  // 渲染完後觸發倉位計算
-  setTimeout(calcPosition, 50);
+  // 渲染完後觸發倉位計算 + 風控鎖定狀態更新
+  setTimeout(() => { calcPosition(); updatePosCalcLock(); }, 80);
 }
 
 function maRow(label, val, price) {
@@ -882,6 +983,147 @@ async function loadWatchlist() {
   });
 }
 
+// ── 風控系統 ─────────────────────────────────────────────
+let _riskStatus = null;
+
+async function loadRiskStatus() {
+  try {
+    const r = await fetch('/api/risk/status');
+    const j = await r.json();
+    if (j.ok) { _riskStatus = j.status; renderRiskStatus(j.status); updatePosCalcLock(); }
+  } catch(e) {}
+}
+
+function renderRiskStatus(s) {
+  const card   = document.getElementById('riskCard');
+  const badge  = document.getElementById('riskBadge');
+  const lockEl = document.getElementById('riskLockMsg');
+  const unlBtn = document.getElementById('riskUnlockBtn');
+  if (!card) return;
+
+  const lvl = s.locked ? 'locked' : (s.warning ? 'warning' : 'safe');
+  card.className = `risk-card ${lvl}`;
+  badge.className = `risk-badge ${lvl}`;
+  badge.textContent = s.locked ? '⛔ 已熔斷' : (s.warning ? '⚠️ 接近上限' : '✅ 正常交易');
+
+  // 進度條
+  const wkPct  = Math.min(100, s.weekly_pnl < 0 ? Math.abs(s.weekly_pnl) / Math.abs(s.weekly_limit) * 100 : 0);
+  const dyPct  = Math.min(100, s.daily_pnl  < 0 ? Math.abs(s.daily_pnl)  / Math.abs(s.daily_limit)  * 100 : 0);
+  const conPct = Math.min(100, s.consecutive / s.con_lim * 100);
+  const barColor = lvl === 'locked' ? 'var(--red)' : (lvl === 'warning' ? 'var(--yellow)' : 'var(--green)');
+
+  const setBar = (id, pct, col) => { const el = document.getElementById(id); if(el) { el.style.width = pct+'%'; el.style.background = col; } };
+  setBar('riskBarWk',  wkPct,  barColor);
+  setBar('riskBarCon', conPct, barColor);
+  setBar('riskBarDy',  dyPct,  barColor);
+
+  const fmtPnl = v => (v >= 0 ? '+' : '') + v.toFixed(0) + 'U';
+  const setVal = (id, txt, col) => { const el = document.getElementById(id); if(el) { el.textContent = txt; el.style.color = col; } };
+  setVal('riskValWk',  `${fmtPnl(s.weekly_pnl)} / ${s.weekly_limit.toFixed(0)}U`, barColor);
+  setVal('riskValCon', `${s.consecutive} / ${s.con_lim}`, barColor);
+  setVal('riskValDy',  `${fmtPnl(s.daily_pnl)} / ${s.daily_limit.toFixed(0)}U`, barColor);
+
+  // 熔斷訊息
+  if (s.locked) {
+    lockEl.style.display = 'block';
+    lockEl.innerHTML = `⛔ <b>${s.reason}</b><br>鎖定至：${(s.lock_until||'').slice(0,16).replace('T',' ')}（剩餘 ${s.hours_left}h）`;
+    unlBtn.style.display = 'block';
+  } else if (s.force_unlocked) {
+    lockEl.style.display = 'block';
+    lockEl.style.background = 'rgba(240,185,11,.1)';
+    lockEl.style.color = 'var(--yellow)';
+    lockEl.textContent = `⚠️ 強制解鎖中，剩餘 ${s.fu_hours_left}h`;
+    unlBtn.style.display = 'none';
+  } else {
+    lockEl.style.display = 'none';
+    unlBtn.style.display = 'none';
+  }
+
+  // 同步設定欄位
+  const cap = document.getElementById('riskCapital');
+  const wkP = document.getElementById('riskWkPct');
+  const dyP = document.getElementById('riskDyPct');
+  if (cap && s.capital)       cap.value = s.capital;
+  if (wkP && s.weekly_limit)  wkP.value = Math.round(Math.abs(s.weekly_limit) / s.capital * 100);
+  if (dyP && s.daily_limit)   dyP.value = Math.round(Math.abs(s.daily_limit)  / s.capital * 100);
+}
+
+function updatePosCalcLock() {
+  const copyBtn    = document.getElementById('posCalcCopyBtn');
+  const binanceBtn = document.getElementById('posCalcBinanceBtn');
+  if (!copyBtn || !binanceBtn) return;
+  const locked = _riskStatus && _riskStatus.locked;
+  if (locked) {
+    const hl = _riskStatus.hours_left || 0;
+    binanceBtn.disabled = true;
+    binanceBtn.style.opacity = '0.4';
+    binanceBtn.style.cursor = 'not-allowed';
+    binanceBtn.textContent = `⛔ 風控鎖定（${hl}h）`;
+  } else {
+    binanceBtn.disabled = false;
+    binanceBtn.style.opacity = '';
+    binanceBtn.style.cursor = '';
+    binanceBtn.textContent = '🔗 幣安下單';
+  }
+}
+
+async function submitTradeResult() {
+  const coin = document.getElementById('trCoin').value;
+  const pnl  = parseFloat(document.getElementById('trPnl').value);
+  if (!coin)     { toast('請選擇幣種'); return; }
+  if (isNaN(pnl)) { toast('請輸入盈虧金額'); return; }
+  try {
+    const r = await fetch('/api/risk/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        coin, pnl_usd: pnl,
+        entry_price: parseFloat(document.getElementById('trEntry').value) || null,
+        exit_price:  parseFloat(document.getElementById('trExit').value)  || null,
+        note: document.getElementById('trNote').value
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    _riskStatus = j.status;
+    renderRiskStatus(j.status);
+    updatePosCalcLock();
+    toast(pnl < 0 ? `📉 虧損 ${pnl}U 已記錄` : `📈 獲利 +${pnl}U 已記錄`);
+    // 清空
+    ['trCoin','trPnl','trEntry','trExit','trNote'].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function saveRiskSettings() {
+  const capital = parseFloat(document.getElementById('riskCapital').value);
+  const wkPct   = parseFloat(document.getElementById('riskWkPct').value);
+  const dyPct   = parseFloat(document.getElementById('riskDyPct').value);
+  if (!capital || !wkPct || !dyPct) return;
+  try {
+    const r = await fetch('/api/risk/settings', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({capital, weekly_loss_pct: wkPct, daily_loss_pct: dyPct})
+    });
+    const j = await r.json();
+    if (j.ok) { _riskStatus = j.status; renderRiskStatus(j.status); toast('✅ 風控設定已更新'); }
+  } catch(e) {}
+}
+
+function showUnlockModal()  { document.getElementById('unlockModal').classList.add('show'); }
+function hideUnlockModal()  { document.getElementById('unlockModal').classList.remove('show'); }
+
+async function doForceUnlock() {
+  hideUnlockModal();
+  try {
+    const r = await fetch('/api/risk/unlock', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({confirm: true})
+    });
+    const j = await r.json();
+    if (j.ok) { toast('⚠️ 強制解鎖 1 小時，Telegram 已通知'); loadRiskStatus(); }
+    else toast('❌ ' + j.error);
+  } catch(e) { toast('❌ 網路錯誤'); }
+}
+
 // ── 倉位計算機 ────────────────────────────────────────────
 function calcPosition() {
   const d = _lastAnalysis;
@@ -1054,15 +1296,26 @@ async function sendWeeklyReport() {
 }
 
 function initJournalPage() {
-  // 填充觀察名單到幣種下拉
-  const sel = document.getElementById('jCoin');
-  const wl  = getWatchlist();
-  sel.innerHTML = '<option value="">— 選擇幣種 —</option>';
-  // 觀察名單置頂
-  wl.forEach(c => sel.innerHTML += `<option value="${c}">⭐ ${c}</option>`);
-  // 常見幣補充（不重複）
-  ['BTC','ETH','SOL','BNB','DOGE','PEPE','WIF','BONK'].filter(c => !wl.includes(c))
-    .forEach(c => sel.innerHTML += `<option value="${c}">${c}</option>`);
+  const wl = getWatchlist();
+  const extra = ['BTC','ETH','SOL','BNB','DOGE','PEPE','WIF','BONK'];
+
+  // 填充觀察日誌幣種下拉
+  const jSel = document.getElementById('jCoin');
+  if (jSel) {
+    jSel.innerHTML = '<option value="">— 選擇幣種 —</option>';
+    wl.forEach(c => jSel.innerHTML += `<option value="${c}">⭐ ${c}</option>`);
+    extra.filter(c => !wl.includes(c)).forEach(c => jSel.innerHTML += `<option value="${c}">${c}</option>`);
+  }
+
+  // 填充交易回填幣種下拉
+  const tSel = document.getElementById('trCoin');
+  if (tSel) {
+    tSel.innerHTML = '<option value="">— 幣種 —</option>';
+    wl.forEach(c => tSel.innerHTML += `<option value="${c}">⭐ ${c}</option>`);
+    extra.filter(c => !wl.includes(c)).forEach(c => tSel.innerHTML += `<option value="${c}">${c}</option>`);
+  }
+
+  loadRiskStatus();
   loadJournal();
 }
 
@@ -1071,8 +1324,11 @@ setInterval(() => {
   document.getElementById("hdrTime").textContent = new Date().toLocaleTimeString('zh-TW');
 }, 1000);
 
-// 頁面載入：從後端初始化 watchlist
-document.addEventListener('DOMContentLoaded', () => { fetchWatchlist(); });
+// 頁面載入：初始化 watchlist + 預載風控狀態
+document.addEventListener('DOMContentLoaded', () => {
+  fetchWatchlist();
+  loadRiskStatus();
+});
 </script>
 </body>
 </html>

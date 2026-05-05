@@ -21,8 +21,20 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "405822104")
 PORT             = int(os.environ.get("PORT", 5000))
 
 # ── 存檔路徑（Railway Volume 掛載在 /data/）──────────────────────
-WATCHLIST_FILE = '/data/watchlist.json'
-JOURNAL_FILE   = '/data/trade_journal.json'
+WATCHLIST_FILE  = '/data/watchlist.json'
+JOURNAL_FILE    = '/data/trade_journal.json'
+RISK_DATA_FILE  = '/data/risk_data.json'
+
+RISK_DEFAULT = {
+    "settings": {
+        "capital": 10000,
+        "weekly_loss_pct": 10,
+        "daily_loss_pct": 5,
+        "consecutive_loss_limit": 5
+    },
+    "force_unlock_until": None,
+    "trades": []
+}
 WL_DEFAULT     = ["ORDI", "BIO", "ORCA", "PENGU"]
 
 def load_watchlist():
@@ -76,6 +88,104 @@ def save_journal(entries):
             return
         except Exception:
             continue
+
+# ── 風控 讀寫 + 計算 ──────────────────────────────────────────
+def load_risk_data():
+    for path in [RISK_DATA_FILE, os.path.join(os.path.dirname(__file__), 'risk_data.json')]:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                    d.setdefault('settings', dict(RISK_DEFAULT['settings']))
+                    d.setdefault('trades', [])
+                    return d
+        except Exception:
+            pass
+    return {'settings': dict(RISK_DEFAULT['settings']), 'force_unlock_until': None, 'trades': []}
+
+def save_risk_data(data):
+    for path in [RISK_DATA_FILE, os.path.join(os.path.dirname(__file__), 'risk_data.json')]:
+        try:
+            dn = os.path.dirname(path)
+            if dn: os.makedirs(dn, exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return
+        except Exception:
+            continue
+
+def compute_risk_status(data):
+    now    = datetime.now(timezone.utc)
+    s      = data.get('settings', RISK_DEFAULT['settings'])
+    trades = data.get('trades', [])
+
+    capital      = float(s.get('capital', 10000))
+    wk_pct       = float(s.get('weekly_loss_pct', 10))
+    dy_pct       = float(s.get('daily_loss_pct', 5))
+    con_lim      = int(s.get('consecutive_loss_limit', 5))
+    weekly_limit = -(wk_pct / 100 * capital)
+    daily_limit  = -(dy_pct  / 100 * capital)
+
+    real = [t for t in trades if t.get('coin') != 'SYSTEM']
+    wd   = now.weekday()
+    wk_start = (now - timedelta(days=wd)).replace(hour=0, minute=0, second=0, microsecond=0)
+    dy_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    wk_trades = [t for t in real if _parse_ts(t.get('ts','')) >= wk_start]
+    dy_trades = [t for t in real if _parse_ts(t.get('ts','')) >= dy_start]
+    weekly_pnl = sum(t.get('pnl_usd', 0) for t in wk_trades)
+    daily_pnl  = sum(t.get('pnl_usd', 0) for t in dy_trades)
+
+    consecutive = 0
+    for t in real:
+        if (t.get('pnl_usd') or 0) < 0: consecutive += 1
+        else: break
+
+    # 強制解鎖檢查
+    fu = data.get('force_unlock_until')
+    if fu:
+        try:
+            fu_ts = _parse_ts(fu)
+            if now < fu_ts:
+                return dict(locked=False, force_unlocked=True,
+                            fu_hours_left=round((fu_ts - now).total_seconds()/3600, 1),
+                            weekly_pnl=weekly_pnl, weekly_limit=weekly_limit,
+                            daily_pnl=daily_pnl, daily_limit=daily_limit,
+                            consecutive=consecutive, con_lim=con_lim, capital=capital)
+        except: pass
+
+    def _lock(reason, until_ts):
+        hl = max(0, (until_ts - now).total_seconds() / 3600)
+        return dict(locked=True, reason=reason,
+                    lock_until=until_ts.isoformat(), hours_left=round(hl, 1),
+                    weekly_pnl=weekly_pnl, weekly_limit=weekly_limit,
+                    daily_pnl=daily_pnl, daily_limit=daily_limit,
+                    consecutive=consecutive, con_lim=con_lim, capital=capital)
+
+    # 規則 A：連續止損
+    if consecutive >= con_lim and real:
+        lf = _parse_ts(real[0].get('ts', now.isoformat()))
+        lu = lf + timedelta(hours=24)
+        if now < lu: return _lock(f'連續 {consecutive} 筆止損', lu)
+
+    # 規則 B：週虧損
+    if weekly_pnl <= weekly_limit:
+        nm = wk_start + timedelta(days=7)
+        if now < nm: return _lock(f'本週虧損 ${abs(weekly_pnl):.0f}，超過上限 ${abs(weekly_limit):.0f}', nm)
+
+    # 規則 C：日虧損
+    if daily_pnl <= daily_limit:
+        tm = dy_start + timedelta(days=1)
+        if now < tm: return _lock(f'今日虧損 ${abs(daily_pnl):.0f}，超過上限 ${abs(daily_limit):.0f}', tm)
+
+    warning = (weekly_pnl < weekly_limit * 0.5 or
+               daily_pnl  < daily_limit  * 0.5 or
+               consecutive >= con_lim - 2)
+
+    return dict(locked=False, warning=warning,
+                weekly_pnl=weekly_pnl, weekly_limit=weekly_limit,
+                daily_pnl=daily_pnl, daily_limit=daily_limit,
+                consecutive=consecutive, con_lim=con_lim, capital=capital)
 
 BINANCE_BASE  = "https://data-api.binance.vision"   # CDN endpoint, bypasses US geo-block
 BINANCE_ALT   = "https://api.binance.com"           # fallback
@@ -418,6 +528,77 @@ def api_telegram():
         return jsonify({"ok": False, "error": data.get("description", "unknown")}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+# ── 風控 Routes ───────────────────────────────────────────────
+@app.route("/api/risk/status", methods=["GET"])
+def api_risk_status():
+    return jsonify({"ok": True, "status": compute_risk_status(load_risk_data())})
+
+@app.route("/api/risk/add", methods=["POST"])
+def api_risk_add():
+    body = request.json or {}
+    coin = body.get("coin", "").upper().strip()
+    pnl  = body.get("pnl_usd")
+    if not coin or pnl is None:
+        return jsonify({"ok": False, "error": "coin 和 pnl_usd 必填"}), 400
+    data = load_risk_data()
+    old_locked = compute_risk_status(data).get('locked', False)
+    trade = {
+        "id": str(uuid.uuid4())[:8],
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts_local": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "coin": coin, "pnl_usd": float(pnl),
+        "entry_price": body.get("entry_price"),
+        "exit_price": body.get("exit_price"),
+        "note": body.get("note", "").strip()
+    }
+    data["trades"].insert(0, trade)
+    new_status = compute_risk_status(data)
+    save_risk_data(data)
+    # 新觸發熔斷 → Telegram 警告
+    if new_status.get('locked') and not old_locked:
+        try:
+            lu = new_status.get('lock_until','')[:16].replace('T',' ')
+            msg = (f"⛔ <b>LANA 風控啟動</b>\n原因：{new_status['reason']}\n"
+                   f"鎖定至：{lu}\n\n建議：休息一下，保護本金。")
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
+        except: pass
+    return jsonify({"ok": True, "trade": trade, "status": new_status})
+
+@app.route("/api/risk/unlock", methods=["POST"])
+def api_risk_unlock():
+    if not (request.json or {}).get("confirm"):
+        return jsonify({"ok": False, "error": "需要確認"}), 400
+    data = load_risk_data()
+    unlock_until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    data["force_unlock_until"] = unlock_until
+    data["trades"].insert(0, {
+        "id": str(uuid.uuid4())[:8],
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts_local": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "coin": "SYSTEM", "pnl_usd": 0, "note": "⚠️ 手動強制解鎖"
+    })
+    save_risk_data(data)
+    try:
+        msg = (f"⚠️ <b>LANA 風控手動解鎖</b>\n時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+               f"有效期：1 小時\n\n請謹慎操作，控制倉位。")
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
+    except: pass
+    return jsonify({"ok": True, "unlock_until": unlock_until})
+
+@app.route("/api/risk/settings", methods=["POST"])
+def api_risk_settings():
+    body = request.json or {}
+    data = load_risk_data()
+    s = data.get("settings", dict(RISK_DEFAULT["settings"]))
+    for k in ("capital","weekly_loss_pct","daily_loss_pct","consecutive_loss_limit"):
+        if k in body:
+            s[k] = int(body[k]) if k == "consecutive_loss_limit" else float(body[k])
+    data["settings"] = s
+    save_risk_data(data)
+    return jsonify({"ok": True, "settings": s, "status": compute_risk_status(data)})
 
 # ── 交易日誌 Routes ───────────────────────────────────────────
 @app.route("/api/journal", methods=["GET"])
