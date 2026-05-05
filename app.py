@@ -899,6 +899,164 @@ def _parse_ts(ts_str):
     except Exception:
         return datetime.min.replace(tzinfo=timezone.utc)
 
+# ── 缺口6：今日進場指數 ───────────────────────────────────────
+
+def compute_entry_index():
+    """計算今日進場指數 0-100，多個訊號加總"""
+    score = 50
+    details = {}
+
+    # 1. BTC 24h 波動
+    try:
+        r = requests.get(
+            "https://data-api.binance.vision/api/v3/ticker/24hr",
+            params={"symbol": "BTCUSDT"}, timeout=10)
+        btc = r.json()
+        chg = float(btc.get('priceChangePercent', 0))
+        vol = abs(chg)
+        price = float(btc.get('lastPrice', 0))
+        if vol < 1:
+            score -= 20; adj = -20; note = '市場死水'
+        elif vol <= 3:
+            score += 10; adj = +10; note = '健康波動'
+        elif vol > 5:
+            score -= 10; adj = -10; note = '波動過大'
+        else:
+            adj = 0; note = '波動適中'
+        details['btc'] = {'change': round(chg, 2), 'price': price, 'adj': adj, 'note': note}
+    except Exception:
+        details['btc'] = {'change': None, 'price': None, 'adj': 0, 'note': '無法取得'}
+
+    # 2. 活躍幣數量（proxy for high LANA score coins）
+    SCAN_COINS = [
+        'BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','DOT','LINK',
+        'UNI','MATIC','ATOM','APT','SUI','ARB','OP','INJ','SEI','TIA',
+        'PEPE','WIF','BONK','FET','TAO','RNDR','GRT','ONDO','JUP','NEAR',
+    ]
+    try:
+        symbols = json.dumps([f"{c}USDT" for c in SCAN_COINS])
+        r2 = requests.get(
+            "https://data-api.binance.vision/api/v3/ticker/24hr",
+            params={"symbols": symbols}, timeout=15)
+        tickers = r2.json()
+        movers = sum(1 for t in tickers if abs(float(t.get('priceChangePercent', 0))) >= 3)
+        if movers > 10:
+            score += 30; adj2 = +30; note2 = '板塊輪動明顯'
+        elif movers >= 5:
+            score += 15; adj2 = +15; note2 = '機會適中'
+        else:
+            score -= 15; adj2 = -15; note2 = '沒得選'
+        details['movers'] = {'count': movers, 'adj': adj2, 'note': note2}
+    except Exception:
+        details['movers'] = {'count': None, 'adj': 0, 'note': '無法計算'}
+
+    # 3. BTC 成交量 vs 7日均量
+    try:
+        kr = requests.get(
+            "https://data-api.binance.vision/api/v3/klines",
+            params={"symbol": "BTCUSDT", "interval": "1d", "limit": 8}, timeout=10)
+        klines = kr.json()
+        if len(klines) >= 8:
+            today_vol = float(klines[-1][5])
+            avg7 = sum(float(k[5]) for k in klines[-8:-1]) / 7
+            ratio = round(today_vol / avg7, 2) if avg7 > 0 else 1.0
+            if ratio > 1.3:
+                score += 15; adj3 = +15; note3 = '資金活躍'
+            elif ratio < 0.7:
+                score -= 15; adj3 = -15; note3 = '資金低迷'
+            else:
+                adj3 = 0; note3 = '成交量正常'
+            details['vol'] = {'ratio': ratio, 'adj': adj3, 'note': note3}
+        else:
+            details['vol'] = {'ratio': None, 'adj': 0, 'note': ''}
+    except Exception:
+        details['vol'] = {'ratio': None, 'adj': 0, 'note': '無法取得'}
+
+    # 4. 恐慌貪婪指數
+    try:
+        fg_r = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10)
+        fg_data = fg_r.json()
+        fg_val = int(fg_data['data'][0]['value'])
+        fg_text = fg_data['data'][0].get('value_classification', '')
+        if (20 <= fg_val <= 30) or (70 <= fg_val <= 80):
+            score += 10; adj4 = +10; note4 = '情緒適中'
+        elif fg_val > 90:
+            score -= 20; adj4 = -20; note4 = '極度貪婪'
+        elif fg_val < 10:
+            score += 5;  adj4 = +5;  note4 = '極度恐慌'
+        else:
+            adj4 = 0; note4 = fg_text
+        details['fg'] = {'val': fg_val, 'text': fg_text, 'adj': adj4, 'note': note4}
+    except Exception:
+        details['fg'] = {'val': None, 'adj': 0, 'note': '無法取得'}
+
+    score = max(0, min(100, score))
+
+    if score >= 80:
+        label = '強進場日'; color = '#22c55e'; emoji = '🟢'
+        advice = '市場機會多，可加大倉位'
+    elif score >= 50:
+        label = '標準日'; color = '#f0b90b'; emoji = '🟡'
+        advice = '正常操作'
+    elif score >= 30:
+        label = '觀望日'; color = '#f97316'; emoji = '🟠'
+        advice = '機會少，謹慎操作'
+    else:
+        label = '不進場日'; color = '#ef4444'; emoji = '🔴'
+        advice = '⛔ 建議今日空手'
+
+    return {
+        'score': score, 'label': label, 'color': color,
+        'emoji': emoji, 'advice': advice, 'details': details,
+        'ts': datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.route("/api/entry_index")
+def api_entry_index():
+    try:
+        return jsonify(compute_entry_index())
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/entry_index/telegram", methods=["POST"])
+def api_entry_index_telegram():
+    try:
+        d = compute_entry_index()
+        det = d['details']
+        btc = det.get('btc', {})
+        vol = det.get('vol', {})
+        fg  = det.get('fg', {})
+        mv  = det.get('movers', {})
+        lines = [
+            f"🌅 <b>LANA 早安日報</b>",
+            f"今日進場指數：<b>{d['score']} / 100</b>  {d['emoji']}",
+            f"建議：{d['advice']}",
+            "",
+        ]
+        if btc.get('change') is not None:
+            lines.append(f"• BTC 24h 波動：{abs(btc['change']):.1f}%  {btc['note']}")
+        if mv.get('count') is not None:
+            lines.append(f"• 活躍幣數量：{mv['count']} 個  {mv['note']}")
+        if vol.get('ratio') is not None:
+            lines.append(f"• 市場成交量：{vol['ratio']}x 7d均量  {vol['note']}")
+        if fg.get('val') is not None:
+            lines.append(f"• 恐慌貪婪：{fg['val']}（{fg['text']}）")
+        lines += ["", "⚠️ 僅供參考，不構成投資建議"]
+        text = "\n".join(lines)
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=15)
+        r = resp.json()
+        if r.get("ok"):
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": r.get("description", "unknown")}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "ts": datetime.now().isoformat()})

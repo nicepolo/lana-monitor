@@ -244,6 +244,14 @@
 
 <!-- ── 市場掃描 ── -->
 <div id="page-scan" class="page active">
+  <!-- 今日進場指數 -->
+  <div id="entryIndexCard" style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid #2b3046">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <span style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.5px">今日進場指數</span>
+      <button class="btn" id="btnEntryTg" style="font-size:11px;padding:3px 10px;background:#229ED9" onclick="sendEntryIndexTelegram()">✈️ 推播</button>
+    </div>
+    <div id="entryIndexBody"><div style="color:var(--muted);font-size:13px">載入中...</div></div>
+  </div>
   <div style="padding:12px 16px;background:var(--bg2);display:flex;gap:8px;border-bottom:1px solid #2b3046;flex-wrap:wrap">
     <button class="btn" onclick="loadScan()" id="btnScan">🔍 掃描全市場</button>
     <button class="btn secondary" onclick="loadScan()" id="btnRefresh" style="display:none">重新整理</button>
@@ -541,6 +549,7 @@ function switchTab(t) {
   document.querySelectorAll(".page").forEach(el => el.classList.remove("active"));
   event.target.classList.add("active");
   document.getElementById(`page-${t}`).classList.add("active");
+  if (t === "scan")      loadEntryIndex();
   if (t === "watchlist") loadWatchlist();
   if (t === "journal")   initJournalPage();
   if (t === "backtest")  initBacktestPage();
@@ -552,11 +561,69 @@ function toast(msg, dur=2500) {
   setTimeout(() => el.classList.remove("show"), dur);
 }
 
+// ── 今日進場指數 ──────────────────────────────────────────
+async function loadEntryIndex() {
+  try {
+    const r = await fetch('/api/entry_index');
+    const d = await r.json();
+    if (d.score == null) return;
+    const det = d.details || {};
+    const btc = det.btc || {}; const vol = det.vol || {};
+    const fg  = det.fg  || {}; const mv  = det.movers || {};
+    const rows = [];
+    if (btc.change != null) rows.push(`BTC ${Math.abs(btc.change).toFixed(1)}%`);
+    if (mv.count  != null) rows.push(`活躍幣 ${mv.count}個`);
+    if (vol.ratio != null) rows.push(`量比 ${vol.ratio}x`);
+    if (fg.val    != null) rows.push(`恐貪 ${fg.val}`);
+    document.getElementById('entryIndexBody').innerHTML = `
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-size:52px;font-weight:800;color:${d.color};line-height:1;min-width:66px;text-align:center">${d.score}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:16px;font-weight:700;color:${d.color}">${d.emoji} ${d.label}</div>
+          <div style="font-size:12px;color:var(--text);margin-top:2px">${d.advice}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:5px">${rows.join(' · ')}</div>
+        </div>
+      </div>`;
+    window._entryScore = d.score;
+    const scanBtn = document.getElementById('btnScan');
+    if (d.score < 30) {
+      scanBtn.style.background = '#4b5563';
+      scanBtn.style.color = '#9ca3af';
+      scanBtn._lowIndex = true;
+    } else {
+      scanBtn.style.background = '';
+      scanBtn.style.color = '';
+      scanBtn._lowIndex = false;
+    }
+  } catch(e) { console.warn('entry index err', e); }
+}
+
+async function sendEntryIndexTelegram() {
+  const btn = document.getElementById('btnEntryTg');
+  btn.disabled = true; btn.textContent = '發送中...';
+  try {
+    const r = await fetch('/api/entry_index/telegram', {method:'POST'});
+    const d = await r.json();
+    toast(d.ok ? '✅ 進場指數已推播' : '❌ ' + (d.error || '推播失敗'));
+  } catch(e) { toast('❌ 發送錯誤'); }
+  btn.disabled = false; btn.textContent = '✈️ 推播';
+}
+
 // ── 市場掃描 ──────────────────────────────────────────────
 async function loadScan() {
+  // 低分日雙擊確認
+  const btn = document.getElementById("btnScan");
+  if (btn._lowIndex && !btn._confirmed) {
+    btn._confirmed = true;
+    toast(`⚠️ 今日進場指數 ${window._entryScore ?? '?'}，建議空手休息。再按一次確認掃描`, 4000);
+    setTimeout(() => { btn._confirmed = false; }, 5000);
+    return;
+  }
+  btn._confirmed = false;
+
   const el = document.getElementById("scanResult");
   el.innerHTML = `<div class="loading"><div class="spinner"></div>掃描全市場中...</div>`;
-  document.getElementById("btnScan").disabled = true;
+  btn.disabled = true;
   try {
     const res = await fetch("/api/scan");
     const json = await res.json();
@@ -1474,6 +1541,7 @@ setInterval(() => {
 document.addEventListener('DOMContentLoaded', () => {
   fetchWatchlist();
   loadRiskStatus();
+  loadEntryIndex();
 });
 </script>
 </body>
