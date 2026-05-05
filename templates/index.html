@@ -474,7 +474,8 @@ function renderAnalysis(d) {
   document.getElementById("analyzeResult").innerHTML = `
   <div class="back-bar">
     <button class="back-btn" onclick="goBack()">&#8592; <span>返回</span></button>
-    <span class="back-coin-title">${d.coin} / USDT</span>
+    <span class="back-coin-title" style="flex:1">${d.coin} / USDT</span>
+    <button class="btn-star" style="font-size:22px;padding:2px 4px" data-wl-coin="${d.coin}" data-analyze-wl="${d.coin}" onclick="toggleWatchlist('${d.coin}',this)" title="${isInWL(d.coin) ? '移除觀察' : '加入觀察'}">${isInWL(d.coin) ? '⭐' : '☆'}</button>
   </div>
   <div class="price-hero">
     <div class="coin-name">${d.coin} / USDT</div>
@@ -578,10 +579,9 @@ function renderAnalysis(d) {
       </div>
     </div>
 
-    <!-- 觀察 + Email + Telegram -->
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn secondary" style="flex:0 0 auto;min-width:110px" data-analyze-wl="${d.coin}" data-wl-coin="${d.coin}" onclick="toggleWatchlist('${d.coin}',this)">${isInWL(d.coin) ? '⭐ 觀察中' : '☆ 加入觀察'}</button>
-      <button class="btn green" style="flex:1" onclick="sendEmail('${d.coin}', \`${reportText.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">📧 報告</button>
+    <!-- Email + Telegram -->
+    <div style="display:flex;gap:8px">
+      <button class="btn green" style="flex:1" onclick="sendEmail('${d.coin}', \`${reportText.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">📧 寄送報告</button>
       <button class="btn" style="flex:1;background:#229ED9" onclick="sendTelegram(\`${reportText.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">✈️ Telegram</button>
     </div>
 
