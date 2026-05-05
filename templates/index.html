@@ -125,7 +125,7 @@
   .scan-vol { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .scan-right { text-align: right; }
   .scan-chg { font-size: 16px; font-weight: 700; }
-  .scan-price { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .scan-price { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 3px; }
 
   /* ── Loading ── */
   .loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 16px; color: var(--muted); font-size: 14px; }
@@ -694,10 +694,11 @@ async function sendScanTelegram() {
   document.querySelectorAll('.scan-coin').forEach(el => {
     const coin = el.textContent.replace(' ⭐','').trim();
     const row = el.closest('.scan-row');
-    const chg = row.querySelector('.scan-chg')?.textContent || '';
-    const vol = row.querySelector('.scan-vol')?.textContent || '';
-    const flag = wl.includes(coin) ? ' ⭐' : '';
-    lines.push(`${flag}${coin}  ${chg}  ${vol}`);
+    const chg  = row.querySelector('.scan-chg')?.textContent || '';
+    const price = row.querySelector('.scan-price')?.textContent || '';
+    const vol  = row.querySelector('.scan-vol')?.textContent || '';
+    const flag = wl.includes(coin) ? '⭐' : '  ';
+    lines.push(`${flag} ${coin}  ${chg}  ${price}  ${vol}`);
   });
   lines.push('');
   lines.push('⚠️ 僅供參考，不構成投資建議');
