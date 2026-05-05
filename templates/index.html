@@ -350,7 +350,7 @@ function renderScan(data) {
         </div>
         <div class="scan-right" style="display:flex;align-items:center;gap:4px">
           <div onclick="quickAnalyze('${d.coin}')">
-            <div class="scan-chg" style="color:var(--green)">+${d.change.toFixed(2)}%</div>
+            <div class="scan-chg" style="color:${d.change>=0?'var(--green)':'var(--red)'}">${d.change>=0?'+':''}${d.change.toFixed(2)}%</div>
             <div class="scan-price">${fmtPrice(d.price)}</div>
           </div>
           <button class="btn-star" data-wl-coin="${d.coin}" onclick="event.stopPropagation();toggleWatchlist('${d.coin}',this)" title="${inWl ? '移除觀察' : '加入觀察'}">${inWl ? '⭐' : '☆'}</button>
