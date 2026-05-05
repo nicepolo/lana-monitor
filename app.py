@@ -13,8 +13,10 @@ from datetime import datetime
 app = Flask(__name__)
 
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
-NOTIFY_TO    = os.environ.get("NOTIFY_TO",    "nicepolo1222@gmail.com")
-PORT         = int(os.environ.get("PORT", 5000))
+NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJcWtwWEYrQJXfG6OtCf9HaE")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "405822104")
+PORT             = int(os.environ.get("PORT", 5000))
 
 # ── Watchlist 存檔路徑（Railway Volume 掛載在 /data/）─────────────
 WATCHLIST_FILE = '/data/watchlist.json'
@@ -371,6 +373,23 @@ def api_email():
         if resp.status_code in (200, 201) and data.get("id"):
             return jsonify({"ok": True})
         return jsonify({"ok": False, "error": data.get("message", str(resp.status_code))}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/telegram", methods=["POST"])
+def api_telegram():
+    body = request.json or {}
+    text = body.get("text", "")
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=15
+        )
+        data = resp.json()
+        if data.get("ok"):
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": data.get("description", "unknown")}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
