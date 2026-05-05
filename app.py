@@ -11,6 +11,7 @@ import json
 import uuid
 from datetime import datetime, timezone, timedelta
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
 
@@ -23,7 +24,20 @@ PORT             = int(os.environ.get("PORT", 5000))
 # ── 存檔路徑（Railway Volume 掛載在 /data/）──────────────────────
 WATCHLIST_FILE  = '/data/watchlist.json'
 JOURNAL_FILE    = '/data/trade_journal.json'
-RISK_DATA_FILE  = '/data/risk_data.json'
+RISK_DATA_FILE   = '/data/risk_data.json'
+BACKTEST_FILE    = '/data/backtest_data.json'
+
+SECTORS = {
+    'DOGE':'迷因','SHIB':'迷因','PEPE':'迷因','WIF':'迷因','BONK':'迷因',
+    'FLOKI':'迷因','MOG':'迷因','TRUMP':'迷因','GIGGLE':'迷因',
+    'FET':'AI','AGIX':'AI','RNDR':'AI','TAO':'AI','WLD':'AI','AKT':'AI','SKYAI':'AI',
+    'BIO':'DeSci','GRT':'DeSci','VITA':'DeSci','RIF':'DeSci',
+    'SOL':'L1','AVAX':'L1','APT':'L1','SUI':'L1','SEI':'L1',
+    'ARB':'L2','OP':'L2','MATIC':'L2','STRK':'L2','ZK':'L2',
+    'ONDO':'RWA','OM':'RWA','LINK':'RWA','MAKER':'RWA',
+    'ORDI':'BRC20','SATS':'BRC20',
+}
+def get_sector(coin): return SECTORS.get(coin.upper(), '其他')
 
 RISK_DEFAULT = {
     "settings": {
@@ -88,6 +102,72 @@ def save_journal(entries):
             return
         except Exception:
             continue
+
+# ── 回測 讀寫 + 統計 ──────────────────────────────────────────
+def load_backtest():
+    for path in [BACKTEST_FILE, os.path.join(os.path.dirname(__file__), 'backtest_data.json')]:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+    return {'snapshots': {}, 'results': {}}
+
+def save_backtest(data):
+    for path in [BACKTEST_FILE, os.path.join(os.path.dirname(__file__), 'backtest_data.json')]:
+        try:
+            dn = os.path.dirname(path)
+            if dn: os.makedirs(dn, exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return
+        except Exception:
+            continue
+
+def _analyze_safe(coin):
+    try: return analyze_coin(coin)
+    except: return None
+
+def compute_backtest_stats(data):
+    results = data.get('results', {})
+    all_e   = [e for day in results.values() for e in day if e.get('pnl_pct') is not None]
+    if not all_e:
+        return {'total_samples': 0, 'days': len(results), 'ranges': [], 'sectors': [], 'recent': []}
+
+    rngs = [('80+', 80, 101), ('60-79', 60, 80), ('40-59', 40, 60), ('<40', 0, 40)]
+    range_stats = []
+    for label, lo, hi in rngs:
+        bkt = [e for e in all_e if lo <= (e.get('lana_score') or 0) < hi]
+        if not bkt:
+            range_stats.append({'label': label, 'count': 0, 'avg_pnl': None, 'win_rate': None})
+            continue
+        avg  = round(sum(e['pnl_pct'] for e in bkt) / len(bkt), 2)
+        wins = sum(1 for e in bkt if e['pnl_pct'] > 0)
+        range_stats.append({'label': label, 'count': len(bkt), 'avg_pnl': avg,
+                            'win_rate': round(wins / len(bkt) * 100, 1)})
+
+    sec_map = {}
+    for e in all_e:
+        s = e.get('sector', '其他')
+        sec_map.setdefault(s, []).append(e['pnl_pct'])
+    sec_stats = sorted(
+        [{'sector': s, 'avg_pnl': round(sum(v)/len(v), 2), 'count': len(v), 'win_rate': round(sum(1 for x in v if x>0)/len(v)*100,1)}
+         for s, v in sec_map.items() if len(v) >= 2],
+        key=lambda x: x['avg_pnl'], reverse=True
+    )
+
+    recent = []
+    for d in sorted(results.keys(), reverse=True)[:5]:
+        valid = [e for e in results[d] if e.get('pnl_pct') is not None]
+        if valid:
+            valid_s = sorted(valid, key=lambda x: x['pnl_pct'], reverse=True)
+            recent.append({'date': d, 'count': len(valid),
+                           'avg_pnl': round(sum(e['pnl_pct'] for e in valid)/len(valid), 2),
+                           'best':  valid_s[0], 'worst': valid_s[-1]})
+
+    return {'total_samples': len(all_e), 'days': len(results),
+            'ranges': range_stats, 'sectors': sec_stats, 'recent': recent}
 
 # ── 風控 讀寫 + 計算 ──────────────────────────────────────────
 def load_risk_data():
@@ -599,6 +679,104 @@ def api_risk_settings():
     data["settings"] = s
     save_risk_data(data)
     return jsonify({"ok": True, "settings": s, "status": compute_risk_status(data)})
+
+# ── 回測 Routes ───────────────────────────────────────────────
+@app.route("/api/backtest/snapshot", methods=["POST"])
+def api_backtest_snapshot():
+    today = datetime.now().strftime('%Y-%m-%d')
+    data  = load_backtest()
+    if today in data.get('snapshots', {}):
+        return jsonify({'ok': True, 'msg': '今日快照已存在',
+                        'count': len(data['snapshots'][today]), 'date': today})
+    try:
+        scan = fetch_market_scan()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+    wl         = load_watchlist()
+    candidates = list({d['coin'] for d in scan[:30]} | set(wl))[:25]
+    analyzed   = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(_analyze_safe, c): c for c in candidates}
+        for f in as_completed(futs, timeout=60):
+            d = f.result()
+            if d and d.get('lana_score') is not None:
+                analyzed.append(d)
+
+    analyzed.sort(key=lambda x: x['lana_score'], reverse=True)
+    snapshot = [{
+        'coin': d['coin'], 'lana_score': d['lana_score'], 'price': d['price'],
+        'change_24h': d['change_24h'], 'volume_24h': d['volume_24h'],
+        'rsi': d['rsi'], 'ma_bull': d['ma_bull'],
+        'vol_ratio': d['vol_ratio'], 'bb_position': d.get('bb_position'),
+        'sector': get_sector(d['coin']), 'ts': datetime.now().isoformat()
+    } for d in analyzed[:20]]
+
+    data.setdefault('snapshots', {})[today] = snapshot
+    save_backtest(data)
+    return jsonify({'ok': True, 'count': len(snapshot), 'date': today})
+
+@app.route("/api/backtest/validate", methods=["POST"])
+def api_backtest_validate():
+    data      = load_backtest()
+    snapshots = data.get('snapshots', {})
+    results   = data.get('results', {})
+    now       = datetime.now()
+    updated   = 0
+    for date_str, snap in snapshots.items():
+        if date_str in results:
+            continue
+        try:
+            snap_date = datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            continue
+        if (now - snap_date).total_seconds() < 86400:
+            continue
+        day_res = []
+        for entry in snap:
+            try:
+                ticker    = fetch_ticker(entry['coin'] + 'USDT')
+                price_now = float(ticker.get('lastPrice', 0))
+                pnl       = round((price_now / entry['price'] - 1) * 100, 2) if entry.get('price') else None
+                day_res.append({**entry, 'price_24h': price_now, 'pnl_pct': pnl,
+                                 'validated_at': now.isoformat()})
+                updated += 1
+            except: pass
+        if day_res:
+            results[date_str] = day_res
+    data['results'] = results
+    if updated:
+        save_backtest(data)
+    return jsonify({'ok': True, 'updated': updated, **compute_backtest_stats(data)})
+
+@app.route("/api/backtest/stats", methods=["GET"])
+def api_backtest_stats():
+    return jsonify({'ok': True, **compute_backtest_stats(load_backtest())})
+
+@app.route("/api/backtest/weekly", methods=["POST"])
+def api_backtest_weekly():
+    stats = compute_backtest_stats(load_backtest())
+    rngs  = stats.get('ranges', [])
+    secs  = stats.get('sectors', [])
+    rngs_txt = "\n".join(
+        f"  Score {r['label']}: 平均 {r['avg_pnl']:+.1f}%  命中 {r['win_rate']}%  ({r['count']}筆)"
+        if r['count'] else f"  Score {r['label']}: 資料不足"
+        for r in rngs)
+    secs_txt = "\n".join(
+        f"  {'🔥' if i==0 else '📊'} {s['sector']}: 平均 {s['avg_pnl']:+.1f}%  ({s['count']}筆)"
+        for i, s in enumerate(secs[:4])) or "  尚無敘事資料"
+    msg = (f"📊 <b>LANA Score 回測週報</b>  {datetime.now().strftime('%Y/%m/%d')}\n\n"
+           f"累積 <b>{stats['total_samples']}</b> 筆  |  <b>{stats['days']}</b> 天\n\n"
+           f"Score 表現：\n{rngs_txt}\n\n板塊排行：\n{secs_txt}\n\n"
+           f"⚠️ 僅供回測參考，不構成投資建議")
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
+        d = r.json()
+        if d.get("ok"): return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": d.get("description","unknown")}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ── 交易日誌 Routes ───────────────────────────────────────────
 @app.route("/api/journal", methods=["GET"])
