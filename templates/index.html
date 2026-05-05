@@ -67,6 +67,11 @@
   .ls-mini-bar { flex: 1; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
   .ls-mini-bar div { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
   .ls-item-val { width: 36px; text-align: right; color: var(--muted); flex-shrink: 0; }
+  .ls-advice { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.07); }
+  .ls-advice-main { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .ls-advice-tips { display: flex; flex-direction: column; gap: 5px; }
+  .ls-tip { font-size: 12px; color: var(--muted); line-height: 1.5; padding-left: 4px; }
+  .ls-tip strong { color: var(--text); }
 
   /* ── Risk Badge ── */
   .risk-banner { padding: 10px 16px; font-size: 13px; font-weight: 600; text-align: center; }
@@ -456,6 +461,7 @@ function renderAnalysis(d) {
         <div class="ls-item"><span class="ls-item-label">BB位置</span><div class="ls-mini-bar"><div style="width:${(ld.bb||0)/15*100}%;background:#a855f7"></div></div><span class="ls-item-val">${ld.bb??0}/15</span></div>
         <div class="ls-item"><span class="ls-item-label">風險</span><div class="ls-mini-bar"><div style="width:${(ld.risk||0)/20*100}%;background:${(ld.risk||0)>=15?'#0ecb81':'#f6465d'}"></div></div><span class="ls-item-val">${ld.risk??0}/20</span></div>
       </div>
+      <div class="ls-advice">${buildLsAdvice(d.lana_score, ld, d)}</div>
     </div>
 
     <!-- 基本數據 -->
@@ -547,6 +553,49 @@ function maRow(label, val, price) {
     <span class="ma-val">${fmtPrice(val)}</span>
     <span class="ma-diff" style="color:${col}">${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%</span>
   </div>`;
+}
+
+function buildLsAdvice(score, ld, d) {
+  // 主建議
+  let main, mainColor;
+  if (score >= 80) {
+    main = '💎 積極布局：各指標全面看多，可分批建倉，止損設 MA30 下方 3%';
+    mainColor = '#FFD700';
+  } else if (score >= 65) {
+    main = '🟢 謹慎跟進：技術偏強，小倉位試水，等量能確認再加碼';
+    mainColor = '#0ecb81';
+  } else if (score >= 50) {
+    main = '🟡 觀望等待：訊號混合，不急於進場，等待更明確的突破訊號';
+    mainColor = '#f0b90b';
+  } else if (score >= 35) {
+    main = '🟠 暫勿追多：整體偏弱，若持倉建議控制比例，等待趨勢轉強';
+    mainColor = '#FF8C00';
+  } else {
+    main = '🔴 規避風險：多項指標看空，建議空倉觀望或嚴格止損';
+    mainColor = '#f6465d';
+  }
+
+  // 各項弱點提示
+  const tips = [];
+  if ((ld.vol || 0) <= 6)
+    tips.push('<span class="ls-tip">⚡ <strong>量能不足（' + (ld.vol||0) + '/20）</strong>：價升量縮是警訊，等成交量放大 1.5x 以上再跟進更安全</span>');
+  if ((ld.trend || 0) < 15)
+    tips.push('<span class="ls-tip">📉 <strong>趨勢偏弱（' + (ld.trend||0) + '/25）</strong>：MA7 未站上 MA30，方向不明，不宜重倉</span>');
+  if (d.bb_position === 'above_upper')
+    tips.push('<span class="ls-tip">🎯 <strong>突破布林上軌</strong>：短線超漲區，等回踩布林中軌（' + fmtPrice(d.bb_mid) + '）附近再考慮</span>');
+  if (d.bb_position === 'below_lower')
+    tips.push('<span class="ls-tip">🔍 <strong>跌破布林下軌</strong>：超賣區可能反彈，但要確認 RSI 同步回升才進場</span>');
+  if ((ld.risk || 0) <= 8)
+    tips.push('<span class="ls-tip">⚠️ <strong>多項風險信號（' + (ld.risk||0) + '/20）</strong>：建議倉位不超過 5%，並設好止損</span>');
+  if (d.rsi && d.rsi > 70)
+    tips.push('<span class="ls-tip">🌡️ <strong>RSI 超買（' + d.rsi.toFixed(1) + '）</strong>：短線追高風險高，等 RSI 回落 60 以下再看</span>');
+  if (d.funding_rate && d.funding_rate > 0.05)
+    tips.push('<span class="ls-tip">💸 <strong>資金費率偏高（' + d.funding_rate + '%）</strong>：多頭擁擠，持倉成本高，注意多單爆倉風險</span>');
+  if (tips.length === 0 && score >= 65)
+    tips.push('<span class="ls-tip">✅ 各項指標無明顯弱點，可按計劃執行</span>');
+
+  return `<div class="ls-advice-main" style="color:${mainColor}">${main}</div>
+          <div class="ls-advice-tips">${tips.join('')}</div>`;
 }
 
 function buildReportText(d) {
