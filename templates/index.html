@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>LANA 妖幣監測</title>
+<style>
+  :root {
+    --bg: #0b0e14; --bg2: #131720; --bg3: #1a2030;
+    --acc: #f0b90b; --acc2: #d4a017;
+    --green: #0ecb81; --red: #f6465d; --yellow: #f0b90b;
+    --text: #eaecef; --muted: #848e9c;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', sans-serif; min-height: 100vh; }
+
+  /* ── Header ── */
+  header { background: var(--bg2); border-bottom: 1px solid #2b3046; padding: 14px 16px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 100; }
+  header h1 { font-size: 18px; font-weight: 700; color: var(--acc); }
+  header span { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; background: var(--bg2); border-bottom: 1px solid #2b3046; }
+  .tab { flex: 1; padding: 12px; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--acc); border-bottom-color: var(--acc); }
+
+  /* ── Search ── */
+  .search-bar { padding: 14px 16px; background: var(--bg2); display: flex; gap: 8px; }
+  .search-bar input { flex: 1; background: var(--bg3); border: 1px solid #2b3046; border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 16px; outline: none; text-transform: uppercase; }
+  .search-bar input:focus { border-color: var(--acc); }
+  .search-bar input::placeholder { color: var(--muted); text-transform: none; }
+  .btn { background: var(--acc); color: #000; border: none; border-radius: 8px; padding: 10px 18px; font-weight: 700; font-size: 14px; cursor: pointer; white-space: nowrap; }
+  .btn:active { opacity: 0.8; }
+  .btn.secondary { background: var(--bg3); color: var(--text); border: 1px solid #2b3046; }
+  .btn.green { background: var(--green); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Cards ── */
+  .content { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--bg2); border-radius: var(--radius); border: 1px solid #2b3046; overflow: hidden; }
+  .card-header { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2b3046; }
+  .card-header h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .card-body { padding: 14px 16px; }
+
+  /* ── Price Hero ── */
+  .price-hero { padding: 20px 16px; text-align: center; }
+  .coin-name { font-size: 22px; font-weight: 700; color: var(--acc); }
+  .price-big { font-size: 36px; font-weight: 700; margin: 6px 0; }
+  .change-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 15px; font-weight: 700; }
+  .up { background: rgba(14,203,129,.15); color: var(--green); }
+  .down { background: rgba(246,70,93,.15); color: var(--red); }
+  .neutral { background: rgba(132,142,156,.15); color: var(--muted); }
+
+  /* ── Risk Badge ── */
+  .risk-banner { padding: 10px 16px; font-size: 13px; font-weight: 600; text-align: center; }
+  .risk-safe    { background: rgba(14,203,129,.12); color: var(--green); }
+  .risk-low     { background: rgba(14,203,129,.08); color: #5bc78a; }
+  .risk-medium  { background: rgba(240,185,11,.12); color: var(--yellow); }
+  .risk-high    { background: rgba(246,70,93,.12); color: var(--red); }
+  .risk-extreme { background: rgba(246,70,93,.2); color: #ff3355; }
+
+  /* ── Grid ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-item { background: var(--bg3); border-radius: 8px; padding: 10px 12px; }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .stat-value { font-size: 16px; font-weight: 700; }
+  .stat-value.green { color: var(--green); }
+  .stat-value.red   { color: var(--red); }
+  .stat-value.yellow{ color: var(--yellow); }
+  .stat-value.muted { color: var(--muted); }
+
+  /* ── MA ── */
+  .ma-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e2536; }
+  .ma-row:last-child { border-bottom: none; }
+  .ma-label { font-size: 12px; color: var(--muted); }
+  .ma-val { font-size: 13px; font-weight: 600; }
+  .ma-diff { font-size: 11px; }
+
+  /* ── Gauge ── */
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .gauge-bar { width: 100%; height: 8px; border-radius: 4px; background: #2b3046; overflow: hidden; }
+  .gauge-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+  .gauge-labels { display: flex; justify-content: space-between; width: 100%; font-size: 10px; color: var(--muted); }
+  .gauge-value { font-size: 22px; font-weight: 700; }
+
+  /* ── Risk List ── */
+  .risk-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #1e2536; font-size: 13px; }
+  .risk-item:last-child { border-bottom: none; }
+  .risk-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-red { background: var(--red); }
+  .dot-green { background: var(--green); }
+
+  /* ── Scan List ── */
+  .scan-row { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #1e2536; cursor: pointer; }
+  .scan-row:last-child { border-bottom: none; }
+  .scan-row:active { opacity: 0.7; }
+  .scan-zone { width: 6px; height: 36px; border-radius: 3px; margin-right: 12px; flex-shrink: 0; }
+  .zone-green  { background: var(--green); }
+  .zone-yellow { background: var(--yellow); }
+  .zone-red    { background: var(--red); }
+  .scan-info { flex: 1; }
+  .scan-coin { font-size: 15px; font-weight: 700; }
+  .scan-vol { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .scan-right { text-align: right; }
+  .scan-chg { font-size: 16px; font-weight: 700; }
+  .scan-price { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── Loading ── */
+  .loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 16px; color: var(--muted); font-size: 14px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid #2b3046; border-top-color: var(--acc); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Toast ── */
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid #2b3046; border-radius: 20px; padding: 10px 20px; font-size: 13px; z-index: 999; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+
+  /* ── Watchlist Buttons ── */
+  .btn-star { background: none; border: none; font-size: 18px; cursor: pointer; padding: 4px 2px; line-height: 1; flex-shrink: 0; }
+  .btn-remove { background: none; border: none; color: var(--muted); font-size: 16px; font-weight: 700; cursor: pointer; padding: 4px 6px; flex-shrink: 0; }
+  .btn-remove:active { color: var(--red); }
+  .wl-add-bar { padding: 10px 16px; background: var(--bg2); display: flex; gap: 8px; border-bottom: 1px solid #2b3046; }
+  .wl-add-bar input { flex: 1; background: var(--bg3); border: 1px solid #2b3046; border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: 14px; outline: none; text-transform: uppercase; }
+  .wl-add-bar input:focus { border-color: var(--acc); }
+
+  /* ── Pages ── */
+  .page { display: none; }
+  .page.active { display: block; }
+  .empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 14px; }
+  .empty-icon { font-size: 36px; margin-bottom: 8px; }
+  .ts-label { font-size: 11px; color: var(--muted); padding: 0 16px 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="font-size:20px">🚨</div>
+  <h1>LANA 妖幣監測</h1>
+  <span id="hdrTime"></span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('scan')">市場掃描</div>
+  <div class="tab" onclick="switchTab('analyze')">深度分析</div>
+  <div class="tab" onclick="switchTab('watchlist')">觀察名單</div>
+</div>
+
+<!-- ── 市場掃描 ── -->
+<div id="page-scan" class="page active">
+  <div style="padding:12px 16px;background:var(--bg2);display:flex;gap:8px;border-bottom:1px solid #2b3046">
+    <button class="btn" onclick="loadScan()" id="btnScan">🔍 掃描全市場</button>
+    <button class="btn secondary" onclick="loadScan()" id="btnRefresh" style="display:none">重新整理</button>
+    <div id="scanTs" class="ts-label" style="display:flex;align-items:center;margin-left:auto"></div>
+  </div>
+  <div id="scanResult">
+    <div class="empty"><div class="empty-icon">📡</div>點擊「掃描全市場」<br>抓取即時妖幣清單</div>
+  </div>
+</div>
+
+<!-- ── 深度分析 ── -->
+<div id="page-analyze" class="page">
+  <div class="search-bar">
+    <input type="text" id="coinInput" placeholder="輸入幣名，例如 BIO" maxlength="12" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" onkeydown="if(event.key==='Enter')runAnalyze()">
+    <button class="btn" onclick="runAnalyze()" id="btnAnalyze">分析</button>
+  </div>
+  <div id="analyzeResult">
+    <div class="empty"><div class="empty-icon">🔍</div>輸入幣種代號<br>例如 BIO、ORDI、ORCA</div>
+  </div>
+</div>
+
+<!-- ── 觀察名單 ── -->
+<div id="page-watchlist" class="page">
+  <div class="wl-add-bar">
+    <input type="text" id="wlInput" placeholder="輸入幣名新增，例如 SOL" maxlength="12" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" onkeydown="if(event.key==='Enter')addCoinToWatchlist()">
+    <button class="btn" onclick="addCoinToWatchlist()">＋ 新增</button>
+  </div>
+  <div id="watchlistContent">
+    <div class="content">
+      <div class="card">
+        <div class="card-header"><h2>👁 追蹤中</h2></div>
+        <div class="card-body">
+          <div id="wlRows"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── 觀察名單 API 管理 ────────────────────────────────────
+let _watchlist = [];  // in-memory cache（由 fetchWatchlist 初始化）
+
+async function fetchWatchlist() {
+  try {
+    const r = await fetch('/api/watchlist');
+    const j = await r.json();
+    _watchlist = j.ok ? j.coins : [];
+  } catch { _watchlist = []; }
+  return _watchlist;
+}
+function getWatchlist()   { return _watchlist; }
+function isInWL(coin)     { return _watchlist.includes(coin.toUpperCase()); }
+
+async function _apiPost(url, coin) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({coin: coin.toUpperCase()})
+    });
+    const j = await r.json();
+    if (j.ok) _watchlist = j.coins;
+    return j.ok;
+  } catch { return false; }
+}
+
+function _refreshStarBtns() {
+  document.querySelectorAll('[data-wl-coin]').forEach(btn => {
+    const c = btn.dataset.wlCoin;
+    const inWl = isInWL(c);
+    btn.textContent = inWl ? '⭐' : '☆';
+    btn.title = inWl ? '移除觀察' : '加入觀察';
+  });
+}
+
+async function toggleWatchlist(coin, btn) {
+  coin = coin.toUpperCase();
+  if (isInWL(coin)) {
+    await _apiPost('/api/watchlist/remove', coin);
+    toast(`移除觀察：${coin}`);
+  } else {
+    await _apiPost('/api/watchlist/add', coin);
+    toast(`⭐ 加入觀察：${coin}`);
+  }
+  if (btn) { btn.textContent = isInWL(coin) ? '⭐' : '☆'; btn.title = isInWL(coin) ? '移除觀察' : '加入觀察'; }
+  _refreshStarBtns();
+  // 若觀察名單頁是開著的，刷新
+  if (document.getElementById('page-watchlist').classList.contains('active')) loadWatchlist();
+  // 更新分析頁的觀察按鈕
+  const ab = document.querySelector('[data-analyze-wl]');
+  if (ab && ab.dataset.analyzeWl === coin) ab.textContent = isInWL(coin) ? '⭐ 觀察中' : '☆ 加入觀察';
+}
+
+async function removeFromWatchlist(coin) {
+  await _apiPost('/api/watchlist/remove', coin);
+  toast(`移除觀察：${coin}`);
+  _refreshStarBtns();
+  loadWatchlist();
+}
+
+async function addCoinToWatchlist() {
+  const coin = document.getElementById('wlInput').value.trim().toUpperCase();
+  if (!coin) return;
+  if (isInWL(coin)) { toast(`${coin} 已在觀察名單`); return; }
+  const ok = await _apiPost('/api/watchlist/add', coin);
+  if (ok) {
+    document.getElementById('wlInput').value = '';
+    toast(`⭐ 已新增：${coin}`);
+    loadWatchlist();
+  }
+}
+
+function fmt(v) {
+  if (!v && v !== 0) return "—";
+  if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `$${(v/1e3).toFixed(0)}K`;
+  return `$${v}`;
+}
+function fmtPrice(v) {
+  if (!v) return "—";
+  if (v < 0.001) return `$${v.toFixed(6)}`;
+  if (v < 1)     return `$${v.toFixed(4)}`;
+  if (v < 100)   return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
+}
+function chgClass(v) { return v > 0 ? "green" : v < 0 ? "red" : "muted"; }
+function chgStr(v)   { return v == null ? "—" : (v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`); }
+
+function switchTab(t) {
+  document.querySelectorAll(".tab").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".page").forEach(el => el.classList.remove("active"));
+  event.target.classList.add("active");
+  document.getElementById(`page-${t}`).classList.add("active");
+  if (t === "watchlist") loadWatchlist();
+}
+
+function toast(msg, dur=2500) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), dur);
+}
+
+// ── 市場掃描 ──────────────────────────────────────────────
+async function loadScan() {
+  const el = document.getElementById("scanResult");
+  el.innerHTML = `<div class="loading"><div class="spinner"></div>掃描全市場中...</div>`;
+  document.getElementById("btnScan").disabled = true;
+  try {
+    const res = await fetch("/api/scan");
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    // 同步後端回傳的最新 watchlist
+    if (json.watchlist) _watchlist = json.watchlist;
+    document.getElementById("scanTs").textContent = json.ts;
+    document.getElementById("btnRefresh").style.display = "";
+    renderScan(json.data);
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
+  }
+  document.getElementById("btnScan").disabled = false;
+}
+
+function renderScan(data) {
+  if (!data.length) {
+    document.getElementById("scanResult").innerHTML = `<div class="empty"><div class="empty-icon">😴</div>今日無符合條件的標的</div>`;
+    return;
+  }
+  const wl = getWatchlist();
+  // 觀察名單的幣置頂
+  data.sort((a, b) => {
+    const aw = wl.includes(a.coin) ? 0 : 1;
+    const bw = wl.includes(b.coin) ? 0 : 1;
+    return aw !== bw ? aw - bw : b.change - a.change;
+  });
+  const groups = {sniper: [], track: [], alert: []};
+  data.forEach(d => {
+    if (d.change >= 50) groups.alert.push(d);
+    else if (d.change >= 15) groups.track.push(d);
+    else groups.sniper.push(d);
+  });
+  let html = `<div class="content">`;
+  const sections = [
+    {key:"sniper", label:"🟢 狙擊區｜5~15%", cls:"zone-green"},
+    {key:"track",  label:"🟡 跟蹤區｜15~50%", cls:"zone-yellow"},
+    {key:"alert",  label:"🔴 警戒區｜>50%", cls:"zone-red"},
+  ];
+  sections.forEach(({key, label, cls}) => {
+    if (!groups[key].length) return;
+    html += `<div class="card"><div class="card-header"><h2>${label}</h2></div><div class="card-body">`;
+    groups[key].slice(0,10).forEach(d => {
+      const inWl = wl.includes(d.coin);
+      html += `<div class="scan-row">
+        <div class="scan-zone ${cls}" onclick="quickAnalyze('${d.coin}')"></div>
+        <div class="scan-info" onclick="quickAnalyze('${d.coin}')">
+          <div class="scan-coin">${d.coin}${inWl ? ' ⭐' : ''}</div>
+          <div class="scan-vol">${fmt(d.volume)} 成交量</div>
+        </div>
+        <div class="scan-right" style="display:flex;align-items:center;gap:4px">
+          <div onclick="quickAnalyze('${d.coin}')">
+            <div class="scan-chg" style="color:var(--green)">+${d.change.toFixed(2)}%</div>
+            <div class="scan-price">${fmtPrice(d.price)}</div>
+          </div>
+          <button class="btn-star" data-wl-coin="${d.coin}" onclick="event.stopPropagation();toggleWatchlist('${d.coin}',this)" title="${inWl ? '移除觀察' : '加入觀察'}">${inWl ? '⭐' : '☆'}</button>
+        </div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  });
+  html += `</div>`;
+  document.getElementById("scanResult").innerHTML = html;
+}
+
+function quickAnalyze(coin) {
+  document.querySelectorAll(".tab")[1].click();
+  document.getElementById("coinInput").value = coin;
+  runAnalyze();
+}
+
+// ── 深度分析 ──────────────────────────────────────────────
+async function runAnalyze() {
+  const coin = document.getElementById("coinInput").value.trim().toUpperCase();
+  if (!coin) return;
+  const el = document.getElementById("analyzeResult");
+  el.innerHTML = `<div class="loading"><div class="spinner"></div>分析 ${coin} 中...</div>`;
+  document.getElementById("btnAnalyze").disabled = true;
+  try {
+    const res = await fetch(`/api/analyze/${coin}`);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    renderAnalysis(json.data);
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
+  }
+  document.getElementById("btnAnalyze").disabled = false;
+}
+
+function renderAnalysis(d) {
+  const riskLabels = {safe:"🟢 風險可控", low:"🟢 輕微風險", medium:"🟡 中等風險", high:"🔴 高風險", extreme:"🔴 極高風險"};
+  const rsiColor = d.rsi > 70 ? "red" : d.rsi > 55 ? "yellow" : d.rsi > 45 ? "green" : "muted";
+  const vrColor  = d.vol_ratio > 1.5 ? "green" : d.vol_ratio < 0.8 ? "red" : "yellow";
+
+  let riskItems = d.risks.length
+    ? d.risks.map(r => `<div class="risk-item"><div class="risk-dot dot-red"></div>${r}</div>`).join("")
+    : `<div class="risk-item"><div class="risk-dot dot-green"></div>暫無明顯風險信號</div>`;
+
+  let maRows = "";
+  if (d.ma7)   maRows += maRow("MA7",   d.ma7,   d.price);
+  if (d.ma30)  maRows += maRow("MA30",  d.ma30,  d.price);
+  if (d.ma120) maRows += maRow("MA120", d.ma120, d.price);
+
+  const rsiPct = d.rsi ? Math.min(d.rsi, 100) : 0;
+  const rsiGrad = d.rsi > 70 ? "#f6465d" : d.rsi > 55 ? "#f0b90b" : "#0ecb81";
+
+  // Build plain text report for email
+  const reportText = buildReportText(d);
+
+  document.getElementById("analyzeResult").innerHTML = `
+  <div class="price-hero">
+    <div class="coin-name">${d.coin} / USDT</div>
+    <div class="price-big">${fmtPrice(d.price)}</div>
+    <span class="change-badge ${d.change_24h >= 0 ? 'up' : 'down'}">${chgStr(d.change_24h)}</span>
+  </div>
+  <div class="risk-banner risk-${d.risk_level}">${riskLabels[d.risk_level] || d.risk_level}</div>
+
+  <div class="content">
+    <!-- 基本數據 -->
+    <div class="card">
+      <div class="card-header"><h2>📊 基本數據</h2></div>
+      <div class="card-body">
+        <div class="grid-2">
+          <div class="stat-item"><div class="stat-label">24h 成交量</div><div class="stat-value">${fmt(d.volume_24h)}</div></div>
+          <div class="stat-item"><div class="stat-label">24h 區間</div><div class="stat-value" style="font-size:12px">${fmtPrice(d.low_24h)} ~ ${fmtPrice(d.high_24h)}</div></div>
+          <div class="stat-item"><div class="stat-label">7日漲幅</div><div class="stat-value ${chgClass(d.change_7d)}">${chgStr(d.change_7d)}</div></div>
+          <div class="stat-item"><div class="stat-label">30日漲幅</div><div class="stat-value ${chgClass(d.change_30d)}">${chgStr(d.change_30d)}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 均線 -->
+    <div class="card">
+      <div class="card-header">
+        <h2>📈 均線分析</h2>
+        <span style="font-size:12px;color:${d.ma_bull ? 'var(--green)' : 'var(--red)'}">${d.ma_bull ? '多頭排列 ✅' : '非多頭 ⚠️'}</span>
+      </div>
+      <div class="card-body">${maRows}</div>
+    </div>
+
+    <!-- RSI -->
+    <div class="card">
+      <div class="card-header"><h2>📉 RSI(14)</h2></div>
+      <div class="card-body">
+        <div class="gauge-wrap">
+          <div class="gauge-value" style="color:${rsiGrad}">${d.rsi ? d.rsi.toFixed(1) : "—"}</div>
+          <div class="gauge-bar"><div class="gauge-fill" style="width:${rsiPct}%;background:${rsiGrad}"></div></div>
+          <div class="gauge-labels"><span>0</span><span>超賣 30</span><span>超買 70</span><span>100</span></div>
+        </div>
+        <div style="margin-top:12px">
+        <div class="grid-2">
+          <div class="stat-item"><div class="stat-label">布林上軌</div><div class="stat-value" style="font-size:13px">${fmtPrice(d.bb_upper)}</div></div>
+          <div class="stat-item"><div class="stat-label">布林下軌</div><div class="stat-value" style="font-size:13px">${fmtPrice(d.bb_lower)}</div></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- 量能 + 合約 -->
+    <div class="card">
+      <div class="card-header"><h2>🔊 量能 / 合約情緒</h2></div>
+      <div class="card-body">
+        <div class="grid-2">
+          <div class="stat-item"><div class="stat-label">量能比（近7日/前7日）</div><div class="stat-value ${vrColor}">${d.vol_ratio ? d.vol_ratio + 'x' : '—'}</div></div>
+          <div class="stat-item"><div class="stat-label">資金費率</div><div class="stat-value ${d.funding_rate > 0.01 ? 'red' : 'green'}">${d.funding_rate != null ? d.funding_rate + '%' : 'N/A'}</div></div>
+          <div class="stat-item"><div class="stat-label">散戶多空比</div><div class="stat-value ${d.global_ls > 1.1 ? 'yellow' : 'muted'}">${d.global_ls || 'N/A'}</div></div>
+          <div class="stat-item"><div class="stat-label">大戶多空比</div><div class="stat-value ${d.top_ls > 1 ? 'green' : d.top_ls < 1 ? 'red' : 'muted'}">${d.top_ls || 'N/A'}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 風險 -->
+    <div class="card">
+      <div class="card-header"><h2>⚠️ 風險信號</h2></div>
+      <div class="card-body">${riskItems}</div>
+    </div>
+
+    <!-- 操作預案 -->
+    <div class="card">
+      <div class="card-header"><h2>🧠 操作預案</h2></div>
+      <div class="card-body">
+        <div class="grid-2">
+          <div class="stat-item"><div class="stat-label">阻力位</div><div class="stat-value" style="color:var(--red)">${fmtPrice(d.resistance)}</div></div>
+          <div class="stat-item"><div class="stat-label">支撐1（-25%）</div><div class="stat-value" style="color:var(--green)">${fmtPrice(d.support1)}</div></div>
+          <div class="stat-item"><div class="stat-label">支撐2（MA30）</div><div class="stat-value" style="color:var(--green)">${fmtPrice(d.support2)}</div></div>
+          <div class="stat-item"><div class="stat-label">止損位</div><div class="stat-value" style="color:var(--muted)">${fmtPrice(d.support2 * 0.97)}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 觀察 + Email -->
+    <div style="display:flex;gap:8px">
+      <button class="btn secondary" style="flex:0 0 auto;min-width:110px" data-analyze-wl="${d.coin}" data-wl-coin="${d.coin}" onclick="toggleWatchlist('${d.coin}',this)">${isInWL(d.coin) ? '⭐ 觀察中' : '☆ 加入觀察'}</button>
+      <button class="btn green" style="flex:1" onclick="sendEmail('${d.coin}', \`${reportText.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">📧 寄送分析報告</button>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted);text-align:center;padding-bottom:8px">⚠️ 僅供觀察，不構成投資建議 | ${d.ts}</div>
+  </div>`;
+}
+
+function maRow(label, val, price) {
+  const diff = ((price - val) / val * 100);
+  const col = diff > 0 ? "var(--green)" : "var(--red)";
+  return `<div class="ma-row">
+    <span class="ma-label">${label}</span>
+    <span class="ma-val">${fmtPrice(val)}</span>
+    <span class="ma-diff" style="color:${col}">${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%</span>
+  </div>`;
+}
+
+function buildReportText(d) {
+  return `LANA 深度覆盤：${d.coin}  |  ${d.ts}
+
+現價：${fmtPrice(d.price)}  |  24h：${chgStr(d.change_24h)}  |  7d：${chgStr(d.change_7d)}  |  30d：${chgStr(d.change_30d)}
+成交量：${fmt(d.volume_24h)}
+
+【均線】${d.ma_bull ? '多頭排列 ✅' : '非多頭 ⚠️'}  MA7:${fmtPrice(d.ma7)} / MA30:${fmtPrice(d.ma30)} / MA120:${fmtPrice(d.ma120)}
+【RSI(14)】${d.rsi ?? 'N/A'}  【量能比】${d.vol_ratio ? d.vol_ratio+'x' : 'N/A'}
+【資金費率】${d.funding_rate != null ? d.funding_rate+'%' : 'N/A'}  【散戶多空】${d.global_ls ?? 'N/A'}  【大戶多空】${d.top_ls ?? 'N/A'}
+
+【風險評級】${d.risk_level.toUpperCase()}
+${d.risks.length ? d.risks.map(r=>'- '+r).join('\n') : '- 暫無明顯風險信號'}
+
+【操作預案】
+- 阻力：${fmtPrice(d.resistance)}
+- 支撐1（-25%）：${fmtPrice(d.support1)}
+- 支撐2（MA30）：${fmtPrice(d.support2)}
+- 止損：${fmtPrice(d.support2 * 0.97)}
+
+⚠️ 本報告不構成投資建議`;
+}
+
+async function sendEmail(coin, text) {
+  toast("寄送中...");
+  try {
+    const res = await fetch("/api/email", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        subject: `[LANA 深度分析] ${coin} ${new Date().toLocaleString('zh-TW')}`,
+        text: text
+      })
+    });
+    const json = await res.json();
+    toast(json.ok ? "✅ 報告已寄出！" : "❌ 寄送失敗：" + json.error);
+  } catch(e) {
+    toast("❌ 網路錯誤");
+  }
+}
+
+// ── 觀察名單 ─────────────────────────────────────────────
+async function loadWatchlist() {
+  const WATCHLIST = getWatchlist();
+  const el = document.getElementById("wlRows");
+  if (!WATCHLIST.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">👁</div>尚無追蹤標的<br><small style="color:var(--muted)">從市場掃描或深度分析按 ⭐ 加入</small></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="loading"><div class="spinner"></div>更新中...</div>`;
+  const results = await Promise.all(WATCHLIST.map(async coin => {
+    try {
+      const r = await fetch(`/api/analyze/${coin}`);
+      const j = await r.json();
+      return j.ok ? j.data : null;
+    } catch { return null; }
+  }));
+  el.innerHTML = "";
+  results.forEach((d, i) => {
+    const coin = WATCHLIST[i];
+    if (!d) {
+      el.innerHTML += `<div class="scan-row">
+        <div class="scan-info"><div class="scan-coin">${coin}</div><div class="scan-vol">載入失敗</div></div>
+        <button class="btn-remove" onclick="removeFromWatchlist('${coin}')" title="移除">✕</button>
+      </div>`;
+      return;
+    }
+    const riskColor = {safe:"var(--green)",low:"var(--green)",medium:"var(--yellow)",high:"var(--red)",extreme:"var(--red)"}[d.risk_level];
+    el.innerHTML += `<div class="scan-row" onclick="quickAnalyze('${d.coin}')">
+      <div class="scan-zone" style="background:${riskColor}"></div>
+      <div class="scan-info">
+        <div class="scan-coin">${d.coin}</div>
+        <div class="scan-vol">RSI ${d.rsi?.toFixed(0) ?? '—'} | 量 ${d.vol_ratio ? d.vol_ratio+'x' : '—'} | ${d.ma_bull ? '多排✅' : '整理⚠️'}</div>
+      </div>
+      <div class="scan-right" style="display:flex;align-items:center;gap:4px">
+        <div>
+          <div class="scan-chg" style="color:${d.change_24h >= 0 ? 'var(--green)' : 'var(--red)'}">${chgStr(d.change_24h)}</div>
+          <div class="scan-price">${fmtPrice(d.price)}</div>
+        </div>
+        <button class="btn-remove" onclick="event.stopPropagation();removeFromWatchlist('${d.coin}')" title="移除">✕</button>
+      </div>
+    </div>`;
+  });
+}
+
+// 更新時間
+setInterval(() => {
+  document.getElementById("hdrTime").textContent = new Date().toLocaleTimeString('zh-TW');
+}, 1000);
+
+// 頁面載入：從後端初始化 watchlist
+document.addEventListener('DOMContentLoaded', () => { fetchWatchlist(); });
+</script>
+</body>
+</html>
