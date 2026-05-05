@@ -8,7 +8,9 @@ import requests
 import math
 import os
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone, timedelta
+from collections import Counter
 
 app = Flask(__name__)
 
@@ -18,8 +20,9 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJc
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "405822104")
 PORT             = int(os.environ.get("PORT", 5000))
 
-# ── Watchlist 存檔路徑（Railway Volume 掛載在 /data/）─────────────
+# ── 存檔路徑（Railway Volume 掛載在 /data/）──────────────────────
 WATCHLIST_FILE = '/data/watchlist.json'
+JOURNAL_FILE   = '/data/trade_journal.json'
 WL_DEFAULT     = ["ORDI", "BIO", "ORCA", "PENGU"]
 
 def load_watchlist():
@@ -47,6 +50,29 @@ def save_watchlist(coins):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w') as f:
                 json.dump({'coins': coins, 'updated_at': datetime.utcnow().isoformat() + 'Z'}, f)
+            return
+        except Exception:
+            continue
+
+# ── 交易日誌 讀寫 ────────────────────────────────────────────
+def load_journal():
+    for path in [JOURNAL_FILE, os.path.join(os.path.dirname(__file__), 'trade_journal.json')]:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_journal(entries):
+    for path in [JOURNAL_FILE, os.path.join(os.path.dirname(__file__), 'trade_journal.json')]:
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(entries, f, ensure_ascii=False, indent=2)
             return
         except Exception:
             continue
@@ -392,6 +418,127 @@ def api_telegram():
         return jsonify({"ok": False, "error": data.get("description", "unknown")}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+# ── 交易日誌 Routes ───────────────────────────────────────────
+@app.route("/api/journal", methods=["GET"])
+def api_journal_get():
+    return jsonify({"ok": True, "entries": load_journal()})
+
+@app.route("/api/journal/add", methods=["POST"])
+def api_journal_add():
+    body = request.json or {}
+    coin      = body.get("coin", "").upper().strip()
+    sentiment = body.get("sentiment", "")
+    reason    = body.get("reason", "").strip()
+    if not coin or not sentiment:
+        return jsonify({"ok": False, "error": "coin 和 sentiment 必填"}), 400
+    try:
+        data = analyze_coin(coin)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"無法取得 {coin} 資料：{e}"}), 400
+    entry = {
+        "id":         str(uuid.uuid4())[:8],
+        "ts":         datetime.now(timezone.utc).isoformat(),
+        "ts_local":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "coin":       coin,
+        "price_at":   data["price"],
+        "lana_score": data["lana_score"],
+        "lana_grade": data["lana_grade"],
+        "sentiment":  sentiment,
+        "reason":     reason,
+        "validated":  False,
+        "price_24h":  None,
+        "pnl_pct":    None,
+        "decision":   None,
+    }
+    entries = load_journal()
+    entries.insert(0, entry)
+    save_journal(entries)
+    return jsonify({"ok": True, "entry": entry})
+
+@app.route("/api/journal/validate", methods=["POST"])
+def api_journal_validate():
+    entries = load_journal()
+    now     = datetime.now(timezone.utc)
+    updated = 0
+    for e in entries:
+        if e.get("validated"):
+            continue
+        try:
+            ts = datetime.fromisoformat(e["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        if (now - ts).total_seconds() < 86400:
+            continue
+        try:
+            ticker    = fetch_ticker(e["coin"] + "USDT")
+            price_now = float(ticker.get("lastPrice", 0))
+            pnl_pct   = round((price_now / e["price_at"] - 1) * 100, 2) if e["price_at"] else None
+            s = e.get("sentiment", "")
+            bullish = s == "很想買"
+            bearish = s in ("怕了", "已經漲太多")
+            if bullish:
+                decision = "✅ 直覺正確" if (pnl_pct or 0) > 0 else "❌ 直覺失準"
+            elif bearish:
+                decision = "✅ 直覺正確" if (pnl_pct or 0) < 0 else "❌ 機會錯過"
+            else:
+                decision = f"📈 漲了 {pnl_pct:+.1f}%" if (pnl_pct or 0) > 3 else (
+                           f"📉 跌了 {pnl_pct:+.1f}%" if (pnl_pct or 0) < -3 else "➖ 橫盤")
+            e.update({"validated": True, "price_24h": price_now,
+                      "pnl_pct": pnl_pct, "decision": decision})
+            updated += 1
+        except Exception:
+            pass
+    if updated:
+        save_journal(entries)
+    return jsonify({"ok": True, "updated": updated, "entries": entries})
+
+@app.route("/api/journal/weekly", methods=["POST"])
+def api_journal_weekly():
+    entries   = load_journal()
+    now       = datetime.now(timezone.utc)
+    week_ago  = now - timedelta(days=7)
+    week_ents = [e for e in entries if _parse_ts(e.get("ts","")) >= week_ago]
+    validated = [e for e in week_ents if e.get("validated")]
+    correct   = [e for e in validated if e.get("decision","").startswith("✅")]
+    accuracy  = f"{len(correct)}/{len(validated)}" if validated else "尚無驗證"
+    coin_cnt  = Counter(e["coin"] for e in week_ents)
+    top_coins = "、".join(f"{c}({n}次)" for c, n in coin_cnt.most_common(3)) or "—"
+    sent_cnt  = Counter(e["sentiment"] for e in week_ents)
+    lines = [
+        f"📔 <b>LANA 盤感週報</b>  {now.strftime('%Y/%m/%d')}",
+        "",
+        f"本週記錄 <b>{len(week_ents)}</b> 筆  |  驗證正確率：<b>{accuracy}</b>",
+        f"關注最多：{top_coins}",
+        "",
+        "情緒分布：" + "  ".join(f"{s} {n}次" for s, n in sent_cnt.most_common()),
+    ]
+    if validated:
+        lines += ["", "近期驗證："]
+        for e in validated[:5]:
+            lines.append(f"  {e['coin']}  {e['sentiment']}  {e['pnl_pct']:+.1f}%  {e['decision']}")
+    lines += ["", "⚠️ 僅供自我覆盤，不構成投資建議"]
+    text = "\n".join(lines)
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=15)
+        d = resp.json()
+        if d.get("ok"):
+            return jsonify({"ok": True})
+        return jsonify({"ok": False, "error": d.get("description","unknown")}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+def _parse_ts(ts_str):
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 @app.route("/health")
 def health():

@@ -151,6 +151,43 @@
   .empty-icon { font-size: 36px; margin-bottom: 8px; }
   .ts-label { font-size: 11px; color: var(--muted); padding: 0 16px 8px; }
 
+  /* ── 4 tabs ── */
+  .tabs { overflow-x: auto; white-space: nowrap; }
+  .tab  { padding: 11px 6px; font-size: 12px; }
+
+  /* ── Journal ── */
+  .jform-card { background:var(--bg2); border-radius:var(--radius); border:1px solid #2b3046; padding:14px 16px; margin:12px 16px 0; }
+  .jform-title { font-size:13px; font-weight:700; color:var(--acc); margin-bottom:12px; }
+  .jform-row { display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
+  .jform-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .jform-select, .jform-input { background:var(--bg3); border:1px solid #2b3046; border-radius:8px; padding:9px 12px; color:var(--text); font-size:14px; outline:none; width:100%; }
+  .jform-select:focus, .jform-input:focus { border-color:var(--acc); }
+  .jform-textarea { background:var(--bg3); border:1px solid #2b3046; border-radius:8px; padding:9px 12px; color:var(--text); font-size:14px; outline:none; width:100%; resize:none; min-height:64px; }
+  .jform-preview { background:var(--bg3); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--muted); margin-bottom:10px; min-height:28px; }
+  .jentry { background:var(--bg2); border-radius:var(--radius); border:1px solid #2b3046; padding:12px 14px; margin:8px 16px 0; }
+  .jentry-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .jentry-coin { font-size:15px; font-weight:700; }
+  .jentry-ts   { font-size:11px; color:var(--muted); }
+  .jentry-body { font-size:12px; color:var(--muted); line-height:1.7; }
+  .jentry-result { display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px solid #1e2536; font-size:12px; }
+  .jentry-decision { font-size:13px; font-weight:700; }
+  .badge-sentiment { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .sent-buy    { background:rgba(14,203,129,.15); color:var(--green); }
+  .sent-watch  { background:rgba(240,185,11,.12); color:var(--yellow); }
+  .sent-fear   { background:rgba(246,70,93,.12); color:var(--red); }
+  .sent-high   { background:rgba(132,142,156,.12); color:var(--muted); }
+  .pending-badge { font-size:11px; color:var(--muted); background:var(--bg3); border-radius:8px; padding:2px 7px; }
+
+  /* ── Position Calc ── */
+  .pos-input-row { display:flex; gap:8px; margin-bottom:10px; }
+  .pos-input-row input, .pos-input-row select { flex:1; background:var(--bg3); border:1px solid #2b3046; border-radius:8px; padding:9px 12px; color:var(--text); font-size:14px; outline:none; }
+  .pos-input-row input:focus, .pos-input-row select:focus { border-color:var(--acc); }
+  .pos-result-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px; }
+  .pos-item { background:var(--bg3); border-radius:8px; padding:9px 12px; }
+  .pos-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px; }
+  .pos-val { font-size:15px; font-weight:700; }
+  .pos-rr  { text-align:center; background:rgba(240,185,11,.1); border-radius:8px; padding:8px; font-size:13px; font-weight:700; color:var(--acc); margin-bottom:10px; }
+
   /* ── Back Bar ── */
   .back-bar { display:flex; align-items:center; background:var(--bg2); border-bottom:1px solid #2b3046; padding:10px 14px; gap:10px; position:sticky; top:52px; z-index:50; }
   .back-btn { background:none; border:none; color:var(--acc); font-size:18px; cursor:pointer; padding:2px 6px 2px 2px; line-height:1; display:flex; align-items:center; gap:4px; }
@@ -170,6 +207,7 @@
   <div class="tab active" onclick="switchTab('scan')">市場掃描</div>
   <div class="tab" onclick="switchTab('analyze')">深度分析</div>
   <div class="tab" onclick="switchTab('watchlist')">觀察名單</div>
+  <div class="tab" onclick="switchTab('journal')">📔 日誌</div>
 </div>
 
 <!-- ── 市場掃描 ── -->
@@ -211,6 +249,53 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── 交易日誌 ── -->
+<div id="page-journal" class="page">
+  <!-- 新增紀錄表單 -->
+  <div class="jform-card">
+    <div class="jform-title">✍️ 新增今日觀察</div>
+
+    <div class="jform-row">
+      <span class="jform-label">幣種</span>
+      <select id="jCoin" class="jform-select" onchange="jFetchPreview()">
+        <option value="">— 選擇幣種 —</option>
+      </select>
+    </div>
+
+    <div class="jform-row">
+      <span class="jform-label">當下感覺</span>
+      <select id="jSentiment" class="jform-select">
+        <option value="">— 選擇情緒 —</option>
+        <option value="很想買">🔥 很想買</option>
+        <option value="觀望">👀 觀望</option>
+        <option value="怕了">😨 怕了</option>
+        <option value="已經漲太多">😤 已經漲太多</option>
+      </select>
+    </div>
+
+    <div class="jform-row">
+      <span class="jform-label">沒下單的原因（選填）</span>
+      <textarea id="jReason" class="jform-textarea" placeholder="例如：量能還沒放大、等回踩均線..."></textarea>
+    </div>
+
+    <div id="jPreview" class="jform-preview">選幣後自動帶入 LANA Score 與現價</div>
+
+    <button class="btn" style="width:100%" id="jSubmitBtn" onclick="submitJournal()">📝 記錄下來</button>
+  </div>
+
+  <!-- 日誌列表 -->
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px 4px">
+    <span style="font-size:13px;font-weight:700;color:var(--acc)">📋 歷史紀錄</span>
+    <div style="display:flex;gap:8px">
+      <button class="btn secondary" style="font-size:12px;padding:6px 12px" onclick="validateJournal()">🔄 驗證24h</button>
+      <button class="btn" style="font-size:12px;padding:6px 12px;background:#229ED9" onclick="sendWeeklyReport()">✈️ 週報</button>
+    </div>
+  </div>
+  <div id="journalList" style="padding-bottom:20px">
+    <div class="empty"><div class="empty-icon">📔</div>尚無紀錄<br><small style="color:var(--muted)">寫下你今天注意到的幣</small></div>
   </div>
 </div>
 
@@ -313,6 +398,7 @@ function switchTab(t) {
   event.target.classList.add("active");
   document.getElementById(`page-${t}`).classList.add("active");
   if (t === "watchlist") loadWatchlist();
+  if (t === "journal")   initJournalPage();
 }
 
 function toast(msg, dur=2500) {
@@ -392,7 +478,8 @@ function renderScan(data) {
   document.getElementById("scanResult").innerHTML = html;
 }
 
-let _prevTab = null;   // 記錄從哪個頁面跳過來
+let _prevTab = null;        // 記錄從哪個頁面跳過來
+let _lastAnalysis = null;   // 最後一次分析結果（倉位計算用）
 
 function quickAnalyze(coin) {
   // 記錄來源頁（掃描頁跳過來就記 'scan'）
@@ -448,6 +535,7 @@ async function runAnalyze() {
 }
 
 function renderAnalysis(d) {
+  _lastAnalysis = d;  // 存給倉位計算機使用
   const riskLabels = {safe:"🟢 風險可控", low:"🟢 輕微風險", medium:"🟡 中等風險", high:"🔴 高風險", extreme:"🔴 極高風險"};
   const rsiColor = d.rsi > 70 ? "red" : d.rsi > 55 ? "yellow" : d.rsi > 45 ? "green" : "muted";
   const vrColor  = d.vol_ratio > 1.5 ? "green" : d.vol_ratio < 0.8 ? "red" : "yellow";
@@ -579,6 +667,34 @@ function renderAnalysis(d) {
       </div>
     </div>
 
+    <!-- 倉位計算機 -->
+    <div class="card">
+      <div class="card-header"><h2>💰 拉哪式倉位計算</h2></div>
+      <div class="card-body">
+        <div class="pos-input-row">
+          <div style="flex:1">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">最大虧損（USD）</div>
+            <input type="number" id="posMaxLoss" value="200" min="1" step="10" oninput="calcPosition()">
+          </div>
+          <div style="flex:1">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">進場類型</div>
+            <select id="posLeverage" onchange="calcPosition()">
+              <option value="1">現貨 1x</option>
+              <option value="3">合約 3x</option>
+              <option value="5">合約 5x</option>
+              <option value="10">合約 10x</option>
+            </select>
+          </div>
+        </div>
+        <div id="posResult"></div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="btn secondary" style="flex:1;font-size:13px" onclick="copyPosition()">📋 複製</button>
+          <button class="btn" style="flex:1;font-size:13px;background:#F0B90B;color:#000" onclick="openBinance('${d.coin}')">🔗 幣安下單</button>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px;text-align:center">⚠️ 計算結果僅供參考，實際下單請在幣安手動確認</div>
+      </div>
+    </div>
+
     <!-- Email + Telegram -->
     <div style="display:flex;gap:8px">
       <button class="btn green" style="flex:1" onclick="sendEmail('${d.coin}', \`${reportText.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">📧 寄送報告</button>
@@ -587,6 +703,8 @@ function renderAnalysis(d) {
 
     <div style="font-size:11px;color:var(--muted);text-align:center;padding-bottom:8px">⚠️ 僅供觀察，不構成投資建議 | ${d.ts}</div>
   </div>`;
+  // 渲染完後觸發倉位計算
+  setTimeout(calcPosition, 50);
 }
 
 function maRow(label, val, price) {
@@ -762,6 +880,190 @@ async function loadWatchlist() {
       </div>
     </div>`;
   });
+}
+
+// ── 倉位計算機 ────────────────────────────────────────────
+function calcPosition() {
+  const d = _lastAnalysis;
+  if (!d) return;
+  const maxLoss  = parseFloat(document.getElementById('posMaxLoss').value) || 200;
+  const leverage = parseFloat(document.getElementById('posLeverage').value) || 1;
+  const entry    = d.price;
+  const stopLoss = d.support2 * 0.97;
+  const stopDist = (entry - stopLoss) / entry;      // 止損距離%
+  if (stopDist <= 0) { document.getElementById('posResult').innerHTML = '<div style="color:var(--red);font-size:12px">止損位異常，無法計算</div>'; return; }
+  const margin   = maxLoss / (leverage * stopDist); // 需投入保證金
+  const exposure = margin * leverage;               // 實際倉位USD
+  const qty      = exposure / entry;                // 幣數量
+  const tp1      = d.resistance;
+  const tp2      = tp1 * 1.12;
+  const rr       = ((tp1 - entry) / (entry - stopLoss)).toFixed(2);
+  const maxLossCheck = exposure * stopDist;
+
+  document.getElementById('posResult').innerHTML = `
+    <div class="pos-result-grid">
+      <div class="pos-item"><div class="pos-label">進場價</div><div class="pos-val">${fmtPrice(entry)}</div></div>
+      <div class="pos-item"><div class="pos-label">止損價</div><div class="pos-val" style="color:var(--red)">${fmtPrice(stopLoss)}</div></div>
+      <div class="pos-item"><div class="pos-label">止損距離</div><div class="pos-val">${(stopDist*100).toFixed(1)}%</div></div>
+      <div class="pos-item"><div class="pos-label">建議倉位（USD）</div><div class="pos-val" style="color:var(--acc)">$${margin.toFixed(0)}</div></div>
+      <div class="pos-item"><div class="pos-label">幣的數量</div><div class="pos-val">${qty.toFixed(4)}</div></div>
+      <div class="pos-item"><div class="pos-label">預期最大虧損</div><div class="pos-val" style="color:var(--red)">$${maxLossCheck.toFixed(1)}</div></div>
+      <div class="pos-item"><div class="pos-label">止盈1（阻力位）</div><div class="pos-val" style="color:var(--green)">${fmtPrice(tp1)}</div></div>
+      <div class="pos-item"><div class="pos-label">止盈2（+12%）</div><div class="pos-val" style="color:var(--green)">${fmtPrice(tp2)}</div></div>
+    </div>
+    <div class="pos-rr">風險回報比 1 : ${rr}</div>`;
+}
+
+function copyPosition() {
+  const d = _lastAnalysis;
+  if (!d) return;
+  const maxLoss  = parseFloat(document.getElementById('posMaxLoss').value) || 200;
+  const leverage = parseFloat(document.getElementById('posLeverage').value) || 1;
+  const entry    = d.price;
+  const stopLoss = d.support2 * 0.97;
+  const stopDist = (entry - stopLoss) / entry;
+  const margin   = maxLoss / (leverage * stopDist);
+  const exposure = margin * leverage;
+  const qty      = exposure / entry;
+  const tp1      = d.resistance;
+  const tp2      = tp1 * 1.12;
+  const rr       = ((tp1 - entry) / (entry - stopLoss)).toFixed(2);
+  const lvText   = leverage === 1 ? '現貨 1x' : `合約 ${leverage}x`;
+  const text = `【LANA 倉位計算】${d.coin}  ${new Date().toLocaleString('zh-TW')}
+進場：${fmtPrice(entry)}  止損：${fmtPrice(stopLoss)}（-${(stopDist*100).toFixed(1)}%）
+類型：${lvText}  最大虧損：$${maxLoss}
+建議保證金：$${margin.toFixed(0)}  幣量：${qty.toFixed(4)}
+止盈1：${fmtPrice(tp1)}  止盈2：${fmtPrice(tp2)}
+風險回報比：1:${rr}`;
+  navigator.clipboard.writeText(text).then(() => toast('📋 已複製到剪貼簿'));
+}
+
+function openBinance(coin) {
+  window.open(`https://www.binance.com/zh-TC/trade/${coin}_USDT?type=spot`, '_blank');
+}
+
+// ── 交易日誌 ─────────────────────────────────────────────
+let _jPreviewData = null;
+
+async function jFetchPreview() {
+  const coin = document.getElementById('jCoin').value;
+  const el   = document.getElementById('jPreview');
+  if (!coin) { el.textContent = '選幣後自動帶入 LANA Score 與現價'; _jPreviewData = null; return; }
+  el.textContent = '載入中...';
+  try {
+    const r = await fetch(`/api/analyze/${coin}`);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    _jPreviewData = j.data;
+    el.innerHTML = `<span style="color:var(--acc);font-weight:700">${coin}</span>  現價 <b>${fmtPrice(j.data.price)}</b>  LANA Score <b style="color:${j.data.lana_score>=65?'var(--green)':j.data.lana_score>=50?'var(--yellow)':'var(--red)'}">${j.data.lana_score}/100</b>  ${j.data.lana_grade}`;
+  } catch(e) { el.textContent = '載入失敗：' + e.message; }
+}
+
+async function submitJournal() {
+  const coin      = document.getElementById('jCoin').value;
+  const sentiment = document.getElementById('jSentiment').value;
+  const reason    = document.getElementById('jReason').value;
+  if (!coin)      { toast('請選擇幣種'); return; }
+  if (!sentiment) { toast('請選擇當下感覺'); return; }
+  const btn = document.getElementById('jSubmitBtn');
+  btn.disabled = true; btn.textContent = '記錄中...';
+  try {
+    const r = await fetch('/api/journal/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({coin, sentiment, reason})
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error);
+    toast('✅ 已記錄！24小時後自動驗證');
+    document.getElementById('jSentiment').value = '';
+    document.getElementById('jReason').value = '';
+    loadJournal();
+  } catch(e) { toast('❌ ' + e.message); }
+  btn.disabled = false; btn.textContent = '📝 記錄下來';
+}
+
+async function loadJournal() {
+  const r = await fetch('/api/journal');
+  const j = await r.json();
+  if (!j.ok) return;
+  renderJournal(j.entries);
+}
+
+function renderJournal(entries) {
+  const el = document.getElementById('journalList');
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📔</div>尚無紀錄<br><small style="color:var(--muted)">寫下你今天注意到的幣</small></div>`;
+    return;
+  }
+  const sentMap = { '很想買':'sent-buy', '觀望':'sent-watch', '怕了':'sent-fear', '已經漲太多':'sent-high' };
+  let html = '';
+  // 按日期分組
+  const groups = {};
+  entries.forEach(e => {
+    const day = e.ts_local ? e.ts_local.split(' ')[0] : '—';
+    if (!groups[day]) groups[day] = [];
+    groups[day].push(e);
+  });
+  Object.keys(groups).forEach(day => {
+    html += `<div style="padding:8px 16px 2px;font-size:11px;color:var(--muted);font-weight:700">${day}</div>`;
+    groups[day].forEach(e => {
+      const sc = sentMap[e.sentiment] || 'sent-watch';
+      const pnlColor = (e.pnl_pct || 0) > 0 ? 'var(--green)' : (e.pnl_pct || 0) < 0 ? 'var(--red)' : 'var(--muted)';
+      const nowTs = Date.now();
+      const entryTs = new Date(e.ts).getTime();
+      const hoursLeft = Math.max(0, Math.ceil((entryTs + 86400000 - nowTs) / 3600000));
+      html += `<div class="jentry">
+        <div class="jentry-head">
+          <span class="jentry-coin">${e.coin}</span>
+          <span class="jentry-ts">${e.ts_local || ''}</span>
+        </div>
+        <div class="jentry-body">
+          <span class="badge-sentiment ${sc}">${e.sentiment}</span>
+          &nbsp; 進場價 <b>${fmtPrice(e.price_at)}</b> &nbsp; LANA <b>${e.lana_score}/100</b> ${e.lana_grade || ''}
+          ${e.reason ? `<br><span style="color:var(--muted)">💬 ${e.reason}</span>` : ''}
+        </div>
+        ${e.validated
+          ? `<div class="jentry-result">
+               <span style="color:${pnlColor};font-weight:700">${e.pnl_pct != null ? (e.pnl_pct > 0 ? '+' : '') + e.pnl_pct.toFixed(1) + '%' : '—'}</span>
+               <span style="color:var(--muted)">→ ${fmtPrice(e.price_24h)}</span>
+               <span class="jentry-decision" style="margin-left:auto">${e.decision || ''}</span>
+             </div>`
+          : `<div class="jentry-result"><span class="pending-badge">⏳ ${hoursLeft}h 後驗證</span></div>`
+        }
+      </div>`;
+    });
+  });
+  el.innerHTML = html;
+}
+
+async function validateJournal() {
+  toast('驗證中...');
+  const r = await fetch('/api/journal/validate', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) {
+    toast(j.updated ? `✅ 驗證了 ${j.updated} 筆` : '尚無到期紀錄');
+    renderJournal(j.entries);
+  }
+}
+
+async function sendWeeklyReport() {
+  toast('發送週報中...');
+  const r = await fetch('/api/journal/weekly', {method:'POST'});
+  const j = await r.json();
+  toast(j.ok ? '✅ 週報已推播到 Telegram！' : '❌ ' + j.error);
+}
+
+function initJournalPage() {
+  // 填充觀察名單到幣種下拉
+  const sel = document.getElementById('jCoin');
+  const wl  = getWatchlist();
+  sel.innerHTML = '<option value="">— 選擇幣種 —</option>';
+  // 觀察名單置頂
+  wl.forEach(c => sel.innerHTML += `<option value="${c}">⭐ ${c}</option>`);
+  // 常見幣補充（不重複）
+  ['BTC','ETH','SOL','BNB','DOGE','PEPE','WIF','BONK'].filter(c => !wl.includes(c))
+    .forEach(c => sel.innerHTML += `<option value="${c}">${c}</option>`);
+  loadJournal();
 }
 
 // 更新時間
