@@ -374,7 +374,7 @@ function renderScan(data) {
       html += `<div class="scan-row">
         <div class="scan-zone ${cls}" onclick="quickAnalyze('${d.coin}')"></div>
         <div class="scan-info" onclick="quickAnalyze('${d.coin}')">
-          <div class="scan-coin">${d.coin}${inWl ? ' ⭐' : ''}</div>
+          <div class="scan-coin">${d.coin}${inWl ? ' <span style="font-size:10px;font-weight:700;background:rgba(240,185,11,0.18);color:var(--acc);border-radius:4px;padding:1px 5px;vertical-align:middle">WL</span>' : ''}</div>
           <div class="scan-vol">${fmt(d.volume)} 成交量</div>
         </div>
         <div class="scan-right" style="display:flex;align-items:center;gap:4px">
@@ -692,7 +692,7 @@ async function sendScanTelegram() {
   lines.push('');
   // 觀察名單先列
   document.querySelectorAll('.scan-coin').forEach(el => {
-    const coin = el.textContent.replace(' ⭐','').trim();
+    const coin = el.textContent.replace('WL','').replace('⭐','').trim();
     const row = el.closest('.scan-row');
     const chg  = row.querySelector('.scan-chg')?.textContent || '';
     const price = row.querySelector('.scan-price')?.textContent || '';
