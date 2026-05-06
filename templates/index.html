@@ -792,7 +792,10 @@ function renderAnalysis(d) {
         <span class="ls-grade">${d.lana_grade || '—'}</span>
       </div>
       <div class="ls-score-wrap">
-        <div class="ls-score-num" style="color:${lsColor}">${d.lana_score ?? '—'}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="ls-score-num" style="color:${lsColor}">${d.lana_score ?? '—'}</div>
+          ${d.early_ambush ? '<span style="font-size:13px;font-weight:700;color:#a855f7;background:rgba(168,85,247,.15);border-radius:6px;padding:2px 7px">⚡ 早期埋伏</span>' : ''}
+        </div>
         <div style="flex:1">
           <div class="ls-bar-wrap"><div class="ls-bar" style="width:${d.lana_score}%;background:${lsColor}"></div></div>
           <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:right">/100</div>
@@ -804,6 +807,7 @@ function renderAnalysis(d) {
         <div class="ls-item"><span class="ls-item-label">量能</span><div class="ls-mini-bar"><div style="width:${(ld.vol||0)/20*100}%;background:#0ecb81"></div></div><span class="ls-item-val">${ld.vol??0}/20</span></div>
         <div class="ls-item"><span class="ls-item-label">BB位置</span><div class="ls-mini-bar"><div style="width:${(ld.bb||0)/15*100}%;background:#a855f7"></div></div><span class="ls-item-val">${ld.bb??0}/15</span></div>
         <div class="ls-item"><span class="ls-item-label">風險</span><div class="ls-mini-bar"><div style="width:${(ld.risk||0)/20*100}%;background:${(ld.risk||0)>=15?'#0ecb81':'#f6465d'}"></div></div><span class="ls-item-val">${ld.risk??0}/20</span></div>
+        ${(ld.contract != null && ld.contract !== 0) ? `<div class="ls-item"><span class="ls-item-label">合約加減</span><div class="ls-mini-bar"><div style="width:${Math.abs(ld.contract)/35*100}%;background:${ld.contract>0?'#a855f7':'#f6465d'}"></div></div><span class="ls-item-val" style="color:${ld.contract>0?'#a855f7':'#f6465d'}">${ld.contract>0?'+':''}${ld.contract}</span></div>` : ''}
       </div>
       <div class="ls-advice">${buildLsAdvice(d.lana_score, ld, d)}</div>
     </div>
@@ -829,6 +833,65 @@ function renderAnalysis(d) {
       </div>
       <div class="card-body">${maRows}</div>
     </div>
+
+    <!-- 合約端訊號 -->
+    ${(() => {
+      const fr = d.funding_rate;
+      const ls = d.global_ls;
+      const oiChg = d.oi_change_24h;
+      // OI解讀
+      let oiLabel='—', oiColor='var(--muted)', oiNote='無合約數據';
+      if (oiChg != null) {
+        if (oiChg >= 20 && Math.abs(d.change_24h) < 5) {
+          oiLabel=`+${oiChg}%`; oiColor='#a855f7'; oiNote='🟢 大戶埋伏（最強訊號）';
+        } else if (oiChg >= 20) {
+          oiLabel=`+${oiChg}%`; oiColor='#f0b90b'; oiNote='🟡 散戶追高';
+        } else if (oiChg <= -20) {
+          oiLabel=`${oiChg}%`; oiColor='#f6465d'; oiNote='🔴 主力出貨';
+        } else {
+          oiLabel=`${oiChg>=0?'+':''}${oiChg}%`; oiColor='var(--text)'; oiNote='中性波動';
+        }
+      }
+      // 資金費率解讀
+      let frLabel='—', frColor='var(--muted)', frNote='無數據';
+      if (fr != null) {
+        frLabel = fr+'%';
+        if (fr > 0.05) { frColor='#f6465d'; frNote='🔴 散戶過度做多'; }
+        else if (fr < -0.05) { frColor='#0ecb81'; frNote='🟢 軋空機會'; }
+        else { frColor='#f0b90b'; frNote='🟡 中性'; }
+      }
+      // 多空比解讀
+      let lsLabel='—', lsColor='var(--muted)', lsNote='無數據';
+      if (ls != null) {
+        lsLabel = ls.toString();
+        if (ls > 2.5) { lsColor='#f6465d'; lsNote='🔴 散戶過度看多'; }
+        else if (ls > 1.5) { lsColor='#f0b90b'; lsNote='🟡 中性偏多'; }
+        else if (ls < 1.0) { lsColor='#0ecb81'; lsNote='🟢 反指標機會'; }
+        else { lsColor='var(--text)'; lsNote='中性'; }
+      }
+      return `<div class="card">
+        <div class="card-header">
+          <h2>📈 合約端訊號</h2>
+          ${d.early_ambush ? '<span style="font-size:11px;color:#a855f7;font-weight:700">⚡ 早期埋伏信號</span>' : ''}
+        </div>
+        <div class="card-body">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1e2436">
+              <div><div style="font-size:11px;color:var(--muted)">24h OI 變化</div><div style="font-size:18px;font-weight:700;color:${oiColor}">${oiLabel}</div></div>
+              <div style="font-size:12px;color:${oiColor};text-align:right">${oiNote}</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1e2436">
+              <div><div style="font-size:11px;color:var(--muted)">資金費率</div><div style="font-size:18px;font-weight:700;color:${frColor}">${frLabel}</div></div>
+              <div style="font-size:12px;color:${frColor};text-align:right">${frNote}</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+              <div><div style="font-size:11px;color:var(--muted)">散戶多空比</div><div style="font-size:18px;font-weight:700;color:${lsColor}">${lsLabel}</div></div>
+              <div style="font-size:12px;color:${lsColor};text-align:right">${lsNote}</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    })()}
 
     <!-- RSI -->
     <div class="card">

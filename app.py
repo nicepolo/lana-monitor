@@ -300,8 +300,8 @@ def vol_ratio(volumes):
     p = sum(volumes[-14:-7]) / 7
     return round(r / p, 2) if p else None
 
-def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks):
-    """LANA Score 0-100 綜合評分"""
+def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks, contract=None):
+    """LANA Score 0-100 綜合評分（含合約端訊號，最高 130 正規化到 100）"""
     # 趨勢 25分
     if ma7 and ma30 and ma120 and ma7 > ma30 > ma120:
         s_trend = 25
@@ -327,14 +327,38 @@ def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks):
     s_bb = {'lower_half': 15, 'below_lower': 12, 'upper_half': 8, 'above_upper': 0}.get(bb_pos, 8)
     # 風險 20分
     s_risk = [20, 15, 8, 2, 0][min(len(risks), 4)]
-    total = s_trend + s_rsi + s_vol + s_bb + s_risk
+    base = s_trend + s_rsi + s_vol + s_bb + s_risk  # 0-100
+
+    # 合約端訊號（最多 +35 / -25）
+    s_contract = 0
+    early_ambush = False
+    if contract:
+        oi_chg    = contract.get('oi_change_24h')
+        price_chg = abs(contract.get('price_change_24h') or 0)
+        funding   = contract.get('funding')   # raw decimal, e.g. 0.0001
+        ls        = contract.get('ls_ratio')
+        if oi_chg is not None and oi_chg >= 20 and price_chg < 5:
+            s_contract += 15; early_ambush = True  # 大戶埋伏最強訊號
+        if funding is not None:
+            if funding < -0.0005:   s_contract += 10  # < -0.05% 軋空機會
+            elif funding > 0.001:   s_contract -= 15  # > 0.1% 過熱
+        if ls is not None:
+            if ls < 1.0:            s_contract += 10  # 散戶看空反指標
+            elif ls > 3.0:          s_contract -= 10  # 散戶過度看多
+
+    raw = base + s_contract
+    # 正規化：原始上限 130 → 顯示 100
+    total = max(0, min(100, round(raw / 130 * 100)))
     return {
-        "total":  max(0, min(100, total)),
-        "trend":  s_trend,
-        "rsi":    s_rsi,
-        "vol":    s_vol,
-        "bb":     s_bb,
-        "risk":   s_risk
+        "total":        total,
+        "raw":          raw,
+        "trend":        s_trend,
+        "rsi":          s_rsi,
+        "vol":          s_vol,
+        "bb":           s_bb,
+        "risk":         s_risk,
+        "contract":     s_contract,
+        "early_ambush": early_ambush,
     }
 
 # ── Binance API 抓取 ─────────────────────────────────────────
@@ -389,6 +413,23 @@ def fetch_top_trader_ls(symbol):
     except:
         return None
 
+def fetch_oi_change(symbol):
+    """抓取當前 OI 及 24h 變化 %，僅支援合約幣種"""
+    try:
+        r1 = requests.get(f"{FUTURES_BASE}/fapi/v1/openInterest",
+                          params={"symbol": symbol}, timeout=8)
+        cur_oi = float(r1.json().get("openInterest", 0))
+        r2 = requests.get(f"{FUTURES_BASE}/futures/data/openInterestHist",
+                          params={"symbol": symbol, "period": "1h", "limit": 25}, timeout=8)
+        hist = r2.json()
+        if isinstance(hist, list) and len(hist) >= 2:
+            old_oi = float(hist[0].get("sumOpenInterest", 0))
+            chg = (cur_oi - old_oi) / old_oi * 100 if old_oi > 0 else 0
+            return {"oi": round(cur_oi, 2), "oi_change_24h": round(chg, 2)}
+        return {"oi": round(cur_oi, 2), "oi_change_24h": None}
+    except:
+        return None
+
 # ── 全市場掃描 ────────────────────────────────────────────────
 STABLECOINS = {"USDT","USDC","DAI","BUSD","TUSD","FDUSD","USDP","GUSD","FRAX","USDD"}
 WRAPPED     = {"WBTC","WETH","WBNB","STETH","WSTETH","CBBTC","RETH","BETH"}
@@ -434,6 +475,7 @@ def analyze_coin(coin):
     funding  = fetch_funding(symbol)
     gl_ls    = fetch_global_ls(symbol)
     top_ls   = fetch_top_trader_ls(symbol)
+    oi_data  = fetch_oi_change(symbol)
 
     c24h  = float(ticker.get("priceChangePercent", 0))
     vol24 = float(ticker.get("quoteVolume", 0))
@@ -461,7 +503,13 @@ def analyze_coin(coin):
         "lower_half"  if bb_lo and bb_mid and price > bb_lo else
         "below_lower"
     )
-    ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+    contract_ctx = {
+        'oi_change_24h':   oi_data['oi_change_24h'] if oi_data else None,
+        'price_change_24h': c24h,
+        'funding':          funding,
+        'ls_ratio':         gl_ls,
+    }
+    ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks, contract=contract_ctx)
     ls_grade = ("💎 極強" if ls["total"] >= 80 else
                 "🟢 強"   if ls["total"] >= 65 else
                 "🟡 普通" if ls["total"] >= 50 else
@@ -488,9 +536,12 @@ def analyze_coin(coin):
         "bb_lower": bb_lo,
         "bb_position": bb_pos,
         "vol_ratio": vr,
-        "funding_rate": round(funding * 100, 5) if funding is not None else None,
-        "global_ls": round(gl_ls, 3) if gl_ls else None,
-        "top_ls":    round(top_ls, 3) if top_ls else None,
+        "funding_rate":    round(funding * 100, 5) if funding is not None else None,
+        "global_ls":       round(gl_ls, 3)   if gl_ls   else None,
+        "top_ls":          round(top_ls, 3)  if top_ls  else None,
+        "oi":              oi_data['oi']           if oi_data else None,
+        "oi_change_24h":   oi_data['oi_change_24h'] if oi_data else None,
+        "early_ambush":    ls.get("early_ambush", False),
         "risks": risks,
         "risk_level": risk_level,
         "lana_score":  ls["total"],
