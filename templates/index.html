@@ -652,8 +652,10 @@ function renderScan(data) {
     const bw = wl.includes(b.coin) ? 0 : 1;
     return aw !== bw ? aw - bw : b.change - a.change;
   });
+  _scanDataMap = {};
   const groups = {sniper: [], track: [], alert: []};
   data.forEach(d => {
+    _scanDataMap[d.coin] = d;
     if (d.change >= 50) groups.alert.push(d);
     else if (d.change >= 15) groups.track.push(d);
     else groups.sniper.push(d);
@@ -681,6 +683,7 @@ function renderScan(data) {
             <div class="scan-price">${fmtPrice(d.price)}</div>
           </div>
           <button class="btn-star" data-wl-coin="${d.coin}" onclick="event.stopPropagation();toggleWatchlist('${d.coin}',this)" title="${inWl ? '移除觀察' : '加入觀察'}">${inWl ? '⭐' : '☆'}</button>
+          <button style="font-size:15px;background:none;border:none;cursor:pointer;padding:2px 3px;opacity:.7" onclick="event.stopPropagation();shareScanCard('${d.coin}')" title="截圖分享">📸</button>
         </div>
       </div>`;
     });
@@ -692,6 +695,7 @@ function renderScan(data) {
 
 let _prevTab = null;        // 記錄從哪個頁面跳過來
 let _lastAnalysis = null;   // 最後一次分析結果（倉位計算用）
+let _scanDataMap  = {};     // coin → scan data（截圖用）
 
 function quickAnalyze(coin) {
   // 記錄來源頁（掃描頁跳過來就記 'scan'）
@@ -775,6 +779,7 @@ function renderAnalysis(d) {
   <div class="back-bar">
     <button class="back-btn" onclick="goBack()">&#8592; <span>返回</span></button>
     <span class="back-coin-title" style="flex:1">${d.coin} / USDT</span>
+    <button style="font-size:18px;background:none;border:none;cursor:pointer;padding:2px 4px;opacity:.8" onclick="shareAnalyzeCard()" title="截圖分享">📸</button>
     <button class="btn-star" style="font-size:22px;padding:2px 4px" data-wl-coin="${d.coin}" data-analyze-wl="${d.coin}" onclick="toggleWatchlist('${d.coin}',this)" title="${isInWL(d.coin) ? '移除觀察' : '加入觀察'}">${isInWL(d.coin) ? '⭐' : '☆'}</button>
   </div>
   <div class="price-hero">
@@ -1058,6 +1063,302 @@ ${d.risks.length ? d.risks.map(r=>'- '+r).join('\n') : '- 暫無明顯風險信�
 ⚠️ 本報告不構成投資建議`;
 }
 
+// ── 截圖分享（缺口7）────────────────────────────────────────
+function _drawRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function buildScanCanvas(d) {
+  const W = 540, H = 810, DPR = 2;
+  const cv = document.createElement('canvas');
+  cv.width = W * DPR; cv.height = H * DPR;
+  const ctx = cv.getContext('2d');
+  ctx.scale(DPR, DPR);
+
+  const BG = '#0b0e14', ACC = '#f0b90b', UP = '#0ecb81', DN = '#f6465d';
+  const zoneColor = d.change >= 50 ? DN : d.change >= 15 ? ACC : UP;
+  const zoneLabel = d.change >= 50 ? '⚠️ 警戒區' : d.change >= 15 ? '📌 跟蹤區' : '🎯 狙擊區';
+
+  // Background
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Top accent line
+  ctx.fillStyle = ACC;
+  ctx.fillRect(0, 0, W, 4);
+
+  // Header
+  ctx.fillStyle = ACC;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('🚨 LANA 妖幣監測', 24, 42);
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '13px sans-serif';
+  ctx.fillText(new Date().toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}), W - 120, 42);
+
+  // Zone badge
+  _drawRoundRect(ctx, 24, 64, 120, 30, 8);
+  ctx.fillStyle = zoneColor + '26';
+  ctx.fill();
+  ctx.fillStyle = zoneColor;
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText(zoneLabel, 34, 84);
+
+  // Coin name
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.fillText(d.coin, 24, 180);
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '22px sans-serif';
+  ctx.fillText('/ USDT', 28, 210);
+
+  // Divider
+  ctx.fillStyle = '#1e2436';
+  ctx.fillRect(24, 228, W - 48, 1);
+
+  // Price
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 44px sans-serif';
+  const priceStr = fmtPrice(d.price);
+  ctx.fillText(priceStr, 24, 290);
+
+  // Change badge
+  const chgPct = (d.change >= 0 ? '+' : '') + d.change.toFixed(2) + '%';
+  ctx.font = 'bold 28px sans-serif';
+  const tw = ctx.measureText(chgPct).width;
+  _drawRoundRect(ctx, 24, 308, tw + 24, 38, 8);
+  ctx.fillStyle = (d.change >= 0 ? UP : DN) + '33';
+  ctx.fill();
+  ctx.fillStyle = d.change >= 0 ? UP : DN;
+  ctx.fillText(chgPct, 36, 334);
+
+  // Stats row
+  const stats = [
+    {label:'成交量', val: fmt(d.volume)},
+    {label:'進場評級', val: d.change >= 50 ? '觀望' : d.change >= 15 ? '跟蹤' : '可進'},
+  ];
+  let sx = 24;
+  stats.forEach(s => {
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(s.label, sx, 390);
+    ctx.fillStyle = '#d1d5db';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(s.val, sx, 412);
+    sx += 200;
+  });
+
+  // Bottom divider
+  ctx.fillStyle = '#1e2436';
+  ctx.fillRect(24, 440, W - 48, 1);
+
+  // Tip
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('⚠️ 僅供參考，不構成投資建議', 24, 470);
+
+  // Big score-like circle placeholder
+  const cx = W - 110, cy = 320, rad = 80;
+  ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+  ctx.fillStyle = '#141822'; ctx.fill();
+  ctx.strokeStyle = zoneColor; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(cx, cy, rad, -Math.PI/2, Math.PI * 2 * 0.75 - Math.PI/2);
+  ctx.stroke();
+  ctx.fillStyle = zoneColor;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${d.change >= 0 ? '+' : ''}${Math.round(d.change)}%`, cx, cy + 10);
+  ctx.textAlign = 'left';
+
+  // Watermark
+  ctx.fillStyle = '#374151';
+  ctx.font = '13px sans-serif';
+  ctx.fillText('by Polo · LANA 妖幣監測', 24, H - 20);
+
+  // Bottom accent
+  ctx.fillStyle = ACC;
+  ctx.fillRect(0, H - 4, W, 4);
+
+  return cv;
+}
+
+function buildAnalyzeCanvas(d) {
+  const W = 540, H = 960, DPR = 2;
+  const cv = document.createElement('canvas');
+  cv.width = W * DPR; cv.height = H * DPR;
+  const ctx = cv.getContext('2d');
+  ctx.scale(DPR, DPR);
+
+  const BG = '#0b0e14', ACC = '#f0b90b', UP = '#0ecb81', DN = '#f6465d';
+  const lsC = d.lana_score >= 80 ? '#FFD700' : d.lana_score >= 65 ? UP : d.lana_score >= 50 ? ACC : d.lana_score >= 35 ? '#f97316' : DN;
+  const riskC = {safe:UP, low:UP, medium:ACC, high:DN, extreme:DN}[d.risk_level] || '#9ca3af';
+
+  // BG + accent lines
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = ACC; ctx.fillRect(0, 0, W, 4);
+
+  // Header
+  ctx.fillStyle = ACC; ctx.font = 'bold 17px sans-serif';
+  ctx.fillText('🚨 LANA 妖幣監測', 24, 40);
+  ctx.fillStyle = '#6b7280'; ctx.font = '12px sans-serif';
+  ctx.fillText(new Date().toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}), W - 115, 40);
+
+  // Coin + price
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 52px sans-serif';
+  ctx.fillText(d.coin, 24, 112);
+  ctx.fillStyle = '#9ca3af'; ctx.font = '18px sans-serif';
+  ctx.fillText('/ USDT', 28, 135);
+
+  // Price + change
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 36px sans-serif';
+  ctx.fillText(fmtPrice(d.price), 24, 184);
+  const chgC = d.change_24h >= 0 ? UP : DN;
+  ctx.fillStyle = chgC; ctx.font = 'bold 22px sans-serif';
+  ctx.fillText((d.change_24h >= 0 ? '+' : '') + d.change_24h.toFixed(2) + '%', 24, 214);
+
+  // Risk banner
+  const riskLabels = {safe:'🟢 風險可控', low:'🟢 輕微風險', medium:'🟡 中等風險', high:'🔴 高風險', extreme:'🔴 極高風險'};
+  _drawRoundRect(ctx, 24, 232, 200, 28, 6); ctx.fillStyle = riskC + '22'; ctx.fill();
+  ctx.fillStyle = riskC; ctx.font = 'bold 13px sans-serif';
+  ctx.fillText(riskLabels[d.risk_level] || d.risk_level, 36, 251);
+
+  // Divider
+  ctx.fillStyle = '#1e2436'; ctx.fillRect(24, 276, W - 48, 1);
+
+  // LANA Score circle
+  const scx = W - 100, scy = 166, srad = 70;
+  ctx.beginPath(); ctx.arc(scx, scy, srad, 0, Math.PI * 2);
+  ctx.fillStyle = '#141822'; ctx.fill();
+  const arcEnd = (d.lana_score / 100) * Math.PI * 2 - Math.PI / 2;
+  ctx.strokeStyle = '#1e2436'; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.arc(scx, scy, srad, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = lsC; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.arc(scx, scy, srad, -Math.PI / 2, arcEnd); ctx.stroke();
+  ctx.fillStyle = lsC; ctx.font = 'bold 30px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(d.lana_score ?? '—', scx, scy + 8);
+  ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif';
+  ctx.fillText('LANA', scx, scy + 24);
+  ctx.textAlign = 'left';
+  if (d.early_ambush) {
+    ctx.fillStyle = '#a855f7'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('⚡ 早期埋伏', scx, scy + 90);
+    ctx.textAlign = 'left';
+  }
+
+  // Metrics grid
+  const metrics = [
+    { l:'RSI(14)', v: d.rsi ? d.rsi.toFixed(1) : '—', c: d.rsi > 70 ? DN : d.rsi > 55 ? ACC : UP },
+    { l:'量能比',  v: d.vol_ratio ? d.vol_ratio+'x' : '—', c: d.vol_ratio > 1.5 ? UP : d.vol_ratio < 0.8 ? DN : ACC },
+    { l:'均線排列', v: d.ma_bull ? '多頭 ✅' : '非多頭', c: d.ma_bull ? UP : ACC },
+    { l:'資金費率', v: d.funding_rate != null ? d.funding_rate+'%' : '—', c: d.funding_rate > 0.05 ? DN : UP },
+    { l:'OI 24h',  v: d.oi_change_24h != null ? (d.oi_change_24h>=0?'+':'')+d.oi_change_24h+'%' : '—', c: d.oi_change_24h > 20 ? '#a855f7' : '#d1d5db' },
+    { l:'多空比',  v: d.global_ls ?? '—', c: d.global_ls > 2.5 ? DN : d.global_ls < 1 ? UP : ACC },
+  ];
+  let mx = 24, my = 320, mi = 0;
+  metrics.forEach(m => {
+    const col = mi % 3, row = Math.floor(mi / 3);
+    const bx = 24 + col * 172, by = 300 + row * 80;
+    _drawRoundRect(ctx, bx, by, 158, 60, 8);
+    ctx.fillStyle = '#141822'; ctx.fill();
+    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif';
+    ctx.fillText(m.l, bx + 10, by + 20);
+    ctx.fillStyle = m.c; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(String(m.v), bx + 10, by + 46);
+    mi++;
+  });
+
+  // Divider
+  ctx.fillStyle = '#1e2436'; ctx.fillRect(24, 472, W - 48, 1);
+
+  // Support / resistance
+  ctx.fillStyle = '#6b7280'; ctx.font = 'bold 12px sans-serif';
+  ctx.fillText('操作區間', 24, 498);
+  const levels = [
+    {label:'阻力', v: d.resistance, c: DN},
+    {label:'支撐1', v: d.support2,   c: UP},
+    {label:'止損',  v: d.support2 ? d.support2 * 0.97 : null, c: '#9ca3af'},
+  ];
+  let lx = 24;
+  levels.forEach(lv => {
+    ctx.fillStyle = '#374151'; ctx.font = '11px sans-serif';
+    ctx.fillText(lv.label, lx, 520);
+    ctx.fillStyle = lv.c; ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(lv.v ? fmtPrice(lv.v) : '—', lx, 540);
+    lx += 160;
+  });
+
+  // Risk signals
+  ctx.fillStyle = '#1e2436'; ctx.fillRect(24, 556, W - 48, 1);
+  ctx.fillStyle = '#6b7280'; ctx.font = 'bold 12px sans-serif';
+  ctx.fillText('風險信號', 24, 580);
+  const risks = d.risks && d.risks.length ? d.risks.slice(0, 3) : ['暫無明顯風險信號'];
+  risks.forEach((r, i) => {
+    ctx.fillStyle = '#9ca3af'; ctx.font = '12px sans-serif';
+    ctx.fillText('• ' + r, 24, 600 + i * 20);
+  });
+
+  // Bottom
+  ctx.fillStyle = '#1e2436'; ctx.fillRect(24, H - 55, W - 48, 1);
+  ctx.fillStyle = '#374151'; ctx.font = '12px sans-serif';
+  ctx.fillText('⚠️ 僅供參考，不構成投資建議', 24, H - 32);
+  ctx.fillStyle = '#4b5563'; ctx.font = '11px sans-serif';
+  ctx.fillText('by Polo · LANA 妖幣監測', 24, H - 14);
+  ctx.fillStyle = ACC; ctx.fillRect(0, H - 4, W, 4);
+
+  return cv;
+}
+
+async function _shareCanvas(canvas, filename) {
+  try {
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    if (navigator.canShare && navigator.canShare({files:[new File([blob],'x.png',{type:'image/png'})]})) {
+      await navigator.share({ files: [new File([blob], filename, {type:'image/png'})] });
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+      toast('📥 已下載圖片');
+    }
+  } catch(e) {
+    if (e.name !== 'AbortError') toast('❌ 分享失敗：' + e.message);
+  }
+}
+
+function shareScanCard(coin) {
+  const d = _scanDataMap[coin];
+  if (!d) { toast('❌ 找不到資料'); return; }
+  toast('⏳ 產生圖片中...');
+  setTimeout(() => {
+    try {
+      const cv = buildScanCanvas(d);
+      _shareCanvas(cv, `LANA_${coin}_${Date.now()}.png`);
+    } catch(e) { toast('❌ 繪圖失敗：' + e.message); }
+  }, 100);
+}
+
+function shareAnalyzeCard() {
+  if (!_lastAnalysis) { toast('❌ 請先分析一個幣'); return; }
+  toast('⏳ 產生分析圖中...');
+  setTimeout(() => {
+    try {
+      const cv = buildAnalyzeCanvas(_lastAnalysis);
+      _shareCanvas(cv, `LANA_分析_${_lastAnalysis.coin}_${Date.now()}.png`);
+    } catch(e) { toast('❌ 繪圖失敗：' + e.message); }
+  }, 100);
+}
+
+// ─────────────────────────────────────────────────────────────
 async function sendEmail(coin, text) {
   toast("寄送中...");
   try {
