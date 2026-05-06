@@ -967,13 +967,18 @@ SECTOR_COLORS = {
 
 def compute_sector_heat():
     # 一次抓所有板塊幣的 24h ticker
+    # 注意：CDN 不支援 symbols 批次查詢，直接用 api.binance.com
     all_coins = list({c for cs in SECTOR_COINS.values() for c in cs})
-    symbols = json.dumps([f"{c}USDT" for c in all_coins])
+    import urllib.parse
+    symbols_json = json.dumps([f"{c}USDT" for c in all_coins])
+    url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={urllib.parse.quote(symbols_json)}"
     try:
-        r = requests.get(
-            "https://data-api.binance.vision/api/v3/ticker/24hr",
-            params={"symbols": symbols}, timeout=15)
-        tickers = {t["symbol"][:-4]: float(t.get("priceChangePercent", 0)) for t in r.json()}
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if isinstance(data, list):
+            tickers = {t["symbol"][:-4]: float(t.get("priceChangePercent", 0)) for t in data}
+        else:
+            tickers = {}
     except Exception:
         tickers = {}
 
@@ -1041,11 +1046,12 @@ def compute_entry_index():
         'PEPE','WIF','BONK','FET','TAO','RNDR','GRT','ONDO','JUP','NEAR',
     ]
     try:
-        symbols = json.dumps([f"{c}USDT" for c in SCAN_COINS])
+        import urllib.parse as _up
+        _sym = json.dumps([f"{c}USDT" for c in SCAN_COINS])
         r2 = requests.get(
-            "https://data-api.binance.vision/api/v3/ticker/24hr",
-            params={"symbols": symbols}, timeout=15)
-        tickers = r2.json()
+            f"https://api.binance.com/api/v3/ticker/24hr?symbols={_up.quote(_sym)}",
+            timeout=15)
+        tickers = r2.json() if isinstance(r2.json(), list) else []
         movers = sum(1 for t in tickers if abs(float(t.get('priceChangePercent', 0))) >= 3)
         if movers > 10:
             score += 30; adj2 = +30; note2 = '板塊輪動明顯'
