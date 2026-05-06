@@ -252,6 +252,13 @@
     </div>
     <div id="entryIndexBody"><div style="color:var(--muted);font-size:13px">載入中...</div></div>
   </div>
+  <!-- 板塊熱度雷達 -->
+  <div id="sectorHeatCard" style="padding:10px 16px 4px;background:var(--bg2);border-bottom:1px solid #2b3046">
+    <div style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.5px;margin-bottom:8px">🎯 板塊熱度雷達</div>
+    <div id="sectorHeatBody" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none">
+      <div style="color:var(--muted);font-size:13px">載入中...</div>
+    </div>
+  </div>
   <div style="padding:12px 16px;background:var(--bg2);display:flex;gap:8px;border-bottom:1px solid #2b3046;flex-wrap:wrap">
     <button class="btn" onclick="loadScan()" id="btnScan">🔍 掃描全市場</button>
     <button class="btn secondary" onclick="loadScan()" id="btnRefresh" style="display:none">重新整理</button>
@@ -549,7 +556,7 @@ function switchTab(t) {
   document.querySelectorAll(".page").forEach(el => el.classList.remove("active"));
   event.target.classList.add("active");
   document.getElementById(`page-${t}`).classList.add("active");
-  if (t === "scan")      loadEntryIndex();
+  if (t === "scan")      { loadEntryIndex(); loadSectorHeat(); }
   if (t === "watchlist") loadWatchlist();
   if (t === "journal")   initJournalPage();
   if (t === "backtest")  initBacktestPage();
@@ -559,6 +566,61 @@ function toast(msg, dur=2500) {
   const el = document.getElementById("toast");
   el.textContent = msg; el.classList.add("show");
   setTimeout(() => el.classList.remove("show"), dur);
+}
+
+// ── 板塊熱度雷達 ──────────────────────────────────────────
+let _sectorFilter = null;  // null = 全部，string = 板塊名稱
+
+async function loadSectorHeat() {
+  try {
+    const r = await fetch('/api/sector_heat');
+    const j = await r.json();
+    if (!j.ok) return;
+    const sectors = j.data;
+    const body = document.getElementById('sectorHeatBody');
+    body.innerHTML = sectors.map(s => {
+      const chgStr = (s.avg_change >= 0 ? '+' : '') + s.avg_change.toFixed(1) + '%';
+      const isActive = _sectorFilter === s.sector;
+      return `<div onclick="filterBySector('${s.sector}',this)" style="
+        flex:0 0 auto;min-width:96px;background:${isActive ? s.color+'33' : '#141822'};
+        border:1.5px solid ${isActive ? s.color : '#2b3046'};border-radius:10px;
+        padding:8px 10px;cursor:pointer;text-align:center;transition:all .2s">
+        <div style="font-size:16px">${s.temp}</div>
+        <div style="font-size:12px;font-weight:700;color:${s.color};margin:2px 0">${s.sector}</div>
+        <div style="font-size:13px;font-weight:700;color:${s.avg_change>=2?'#0ecb81':s.avg_change>=-1?'#f0b90b':'#f6465d'}">${chgStr}</div>
+        <div style="font-size:10px;color:var(--muted)">${s.hot_count} 活躍</div>
+      </div>`;
+    }).join('') + `<div onclick="filterBySector(null,this)" style="
+        flex:0 0 auto;min-width:72px;background:#141822;border:1.5px solid ${_sectorFilter===null?'var(--acc)':'#2b3046'};
+        border-radius:10px;padding:8px 10px;cursor:pointer;text-align:center">
+        <div style="font-size:16px">🔓</div>
+        <div style="font-size:12px;font-weight:700;color:var(--muted);margin:2px 0">全部</div>
+      </div>`;
+    // Store sector coins map for filtering
+    window._sectorCoinsMap = {};
+    sectors.forEach(s => { window._sectorCoinsMap[s.sector] = s.coins; });
+  } catch(e) { console.warn('sector heat err', e); }
+}
+
+function filterBySector(sector, el) {
+  _sectorFilter = sector;
+  // Re-render sector heat to update active state
+  loadSectorHeat();
+  // Filter scan results if available
+  if (!Object.keys(_scanDataMap).length) { toast('請先掃描市場'); return; }
+  if (!sector) {
+    // Show all
+    renderScan(Object.values(_scanDataMap));
+    return;
+  }
+  const coins = (window._sectorCoinsMap || {})[sector] || [];
+  const filtered = Object.values(_scanDataMap).filter(d => coins.includes(d.coin.toUpperCase()));
+  if (!filtered.length) {
+    document.getElementById('scanResult').innerHTML = `<div class="empty"><div class="empty-icon">❄️</div>${sector} 板塊目前無活躍幣</div>`;
+  } else {
+    renderScan(filtered);
+  }
+  toast(`🎯 ${sector} 板塊 ${filtered.length} 個幣`);
 }
 
 // ── 今日進場指數 ──────────────────────────────────────────
@@ -1906,6 +1968,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchWatchlist();
   loadRiskStatus();
   loadEntryIndex();
+  loadSectorHeat();
 });
 </script>
 </body>

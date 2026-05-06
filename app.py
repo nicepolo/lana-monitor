@@ -950,6 +950,62 @@ def _parse_ts(ts_str):
     except Exception:
         return datetime.min.replace(tzinfo=timezone.utc)
 
+# ── 缺口5：板塊熱度雷達 ───────────────────────────────────────
+
+SECTOR_COINS = {
+    '迷因':  ['DOGE','SHIB','PEPE','WIF','BONK','FLOKI','MOG','TRUMP','GIGGLE'],
+    'AI':    ['FET','AGIX','RNDR','TAO','WLD','AKT','SKYAI'],
+    'DeSci': ['BIO','GRT','VITA','RIF'],
+    'L1':    ['SOL','AVAX','APT','SUI','SEI'],
+    'L2':    ['ARB','OP','MATIC','STRK','ZK'],
+    'RWA':   ['ONDO','OM','LINK','MAKER'],
+}
+SECTOR_COLORS = {
+    '迷因': '#f97316', 'AI': '#3b82f6', 'DeSci': '#22c55e',
+    'L1':   '#a855f7', 'L2': '#06b6d4', 'RWA':   '#f0b90b',
+}
+
+def compute_sector_heat():
+    # 一次抓所有板塊幣的 24h ticker
+    all_coins = list({c for cs in SECTOR_COINS.values() for c in cs})
+    symbols = json.dumps([f"{c}USDT" for c in all_coins])
+    try:
+        r = requests.get(
+            "https://data-api.binance.vision/api/v3/ticker/24hr",
+            params={"symbols": symbols}, timeout=15)
+        tickers = {t["symbol"][:-4]: float(t.get("priceChangePercent", 0)) for t in r.json()}
+    except Exception:
+        tickers = {}
+
+    result = []
+    for sector, coins in SECTOR_COINS.items():
+        changes = [tickers[c] for c in coins if c in tickers]
+        if not changes:
+            result.append({"sector": sector, "avg_change": 0, "hot_count": 0,
+                           "temp": "❄️", "label": "冷卻", "color": SECTOR_COLORS.get(sector,'#9ca3af'), "coins": coins})
+            continue
+        avg = round(sum(changes) / len(changes), 2)
+        hot = sum(1 for c in changes if c >= 5)
+        if avg >= 8:   temp, label = "🔥", "噴發"
+        elif avg >= 2: temp, label = "🌡", "暖場"
+        else:          temp, label = "❄️", "冷卻"
+        result.append({
+            "sector": sector, "avg_change": avg, "hot_count": hot,
+            "temp": temp, "label": label,
+            "color": SECTOR_COLORS.get(sector, '#9ca3af'), "coins": coins
+        })
+    result.sort(key=lambda x: x["avg_change"], reverse=True)
+    return result
+
+
+@app.route("/api/sector_heat")
+def api_sector_heat():
+    try:
+        return jsonify({"ok": True, "data": compute_sector_heat()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── 缺口6：今日進場指數 ───────────────────────────────────────
 
 def compute_entry_index():
@@ -1094,6 +1150,16 @@ def api_entry_index_telegram():
             lines.append(f"• 市場成交量：{vol['ratio']}x 7d均量  {vol['note']}")
         if fg.get('val') is not None:
             lines.append(f"• 恐慌貪婪：{fg['val']}（{fg['text']}）")
+        # 板塊熱度
+        try:
+            sectors = compute_sector_heat()
+            if sectors:
+                lines.append("")
+                lines.append("🎯 <b>板塊溫度</b>")
+                for s in sectors[:4]:
+                    lines.append(f"{s['temp']} {s['sector']}（均{s['avg_change']:+.1f}%，{s['hot_count']}個活躍幣）")
+        except Exception:
+            pass
         lines += ["", "⚠️ 僅供參考，不構成投資建議"]
         text = "\n".join(lines)
         resp = requests.post(
