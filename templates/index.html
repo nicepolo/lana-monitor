@@ -218,6 +218,13 @@
   .pos-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px; }
   .pos-val { font-size:15px; font-weight:700; }
   .pos-rr  { text-align:center; background:rgba(240,185,11,.1); border-radius:8px; padding:8px; font-size:13px; font-weight:700; color:var(--acc); margin-bottom:10px; }
+  .pos-mode-btn { font-size:12px;font-weight:600;padding:5px 12px;border:1.5px solid #2b3046;background:var(--bg3);color:var(--muted);border-radius:20px;cursor:pointer; }
+  .pos-mode-btn.active { border-color:var(--acc);color:var(--acc);background:rgba(240,185,11,.1); }
+  .pos-batch { background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:3px solid var(--acc); }
+  .pos-batch-title { font-size:11px;font-weight:700;color:var(--acc);margin-bottom:6px; }
+  .pos-batch-grid { display:grid;grid-template-columns:1fr 1fr;gap:6px; }
+  .pos-tp-row { display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #1e2436; }
+  .pos-tp-row:last-child { border-bottom:none; }
 
   /* ── Back Bar ── */
   .back-bar { display:flex; align-items:center; background:var(--bg2); border-bottom:1px solid #2b3046; padding:10px 14px; gap:10px; position:sticky; top:52px; z-index:50; }
@@ -1009,9 +1016,9 @@ function renderAnalysis(d) {
       </div>
     </div>
 
-    <!-- 倉位計算機 -->
+    <!-- 智能倉位計畫 -->
     <div class="card">
-      <div class="card-header"><h2>💰 拉哪式倉位計算</h2></div>
+      <div class="card-header"><h2>💰 智能倉位計畫</h2></div>
       <div class="card-body">
         <div class="pos-input-row">
           <div style="flex:1">
@@ -1019,7 +1026,7 @@ function renderAnalysis(d) {
             <input type="number" id="posMaxLoss" value="200" min="1" step="10" oninput="calcPosition()">
           </div>
           <div style="flex:1">
-            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">進場類型</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:4px">槓桿</div>
             <select id="posLeverage" onchange="calcPosition()">
               <option value="1">現貨 1x</option>
               <option value="3">合約 3x</option>
@@ -1028,9 +1035,18 @@ function renderAnalysis(d) {
             </select>
           </div>
         </div>
+        <div style="margin-bottom:10px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">進場模式</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="pos-mode-btn active" data-mode="single"  onclick="setPosMode('single',this)">一次進場</button>
+            <button class="pos-mode-btn"        data-mode="split2"  onclick="setPosMode('split2',this)">分2批</button>
+            <button class="pos-mode-btn"        data-mode="split3"  onclick="setPosMode('split3',this)">分3批</button>
+            <button class="pos-mode-btn"        data-mode="test"    onclick="setPosMode('test',this)">試水加碼</button>
+          </div>
+        </div>
         <div id="posResult"></div>
-        <div style="display:flex;gap:8px;margin-top:6px">
-          <button id="posCalcCopyBtn" class="btn secondary" style="flex:1;font-size:13px" onclick="copyPosition()">📋 複製</button>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="posCalcCopyBtn" class="btn secondary" style="flex:1;font-size:13px" onclick="copyPosition()">📋 完整計畫</button>
           <button id="posCalcBinanceBtn" class="btn" style="flex:1;font-size:13px;background:#F0B90B;color:#000" onclick="openBinance('${d.coin}')">🔗 幣安下單</button>
         </div>
         <div style="font-size:10px;color:var(--muted);margin-top:6px;text-align:center">⚠️ 計算結果僅供參考，實際下單請在幣安手動確認</div>
@@ -1661,36 +1677,94 @@ async function doForceUnlock() {
   } catch(e) { toast('❌ 網路錯誤'); }
 }
 
-// ── 倉位計算機 ────────────────────────────────────────────
+// ── 智能倉位計畫 ─────────────────────────────────────────
+let _posMode = 'single';
+
+function setPosMode(mode, btn) {
+  _posMode = mode;
+  document.querySelectorAll('.pos-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  calcPosition();
+}
+
+function _calcBatches(entry, stopBase, maxLoss, leverage, mode) {
+  // 計算各批次 { entry, pct, stop, condition }
+  const base = stopBase * 0.97;
+  if (mode === 'single') {
+    return [{ label:'進場', entry, pct:100, stop: base, condition:'立即進場' }];
+  } else if (mode === 'split2') {
+    return [
+      { label:'第1批 50%', entry, pct:50, stop: base, condition:'立即進場' },
+      { label:'第2批 50%', entry: entry*1.03, pct:50, stop: entry*0.98, condition:'確認上漲3%後' },
+    ];
+  } else if (mode === 'split3') {
+    return [
+      { label:'第1批 30%', entry, pct:30, stop: base, condition:'立即進場' },
+      { label:'第2批 40%', entry: entry*1.03, pct:40, stop: entry*0.98, condition:'確認上漲3%後' },
+      { label:'第3批 30%', entry: entry*1.06, pct:30, stop: entry*1.03, condition:'確認上漲6%後' },
+    ];
+  } else { // test
+    return [
+      { label:'試水 20%', entry, pct:20, stop: base, condition:'立即試水' },
+      { label:'加碼 80%', entry: entry*1.03, pct:80, stop: entry*0.98, condition:'突破確認後加碼' },
+    ];
+  }
+}
+
 function calcPosition() {
   const d = _lastAnalysis;
   if (!d) return;
   const maxLoss  = parseFloat(document.getElementById('posMaxLoss').value) || 200;
   const leverage = parseFloat(document.getElementById('posLeverage').value) || 1;
   const entry    = d.price;
-  const stopLoss = d.support2 * 0.97;
-  const stopDist = (entry - stopLoss) / entry;      // 止損距離%
+  const stopBase = d.support2 || entry * 0.85;
+  const stopDist = (entry - stopBase * 0.97) / entry;
   if (stopDist <= 0) { document.getElementById('posResult').innerHTML = '<div style="color:var(--red);font-size:12px">止損位異常，無法計算</div>'; return; }
-  const margin   = maxLoss / (leverage * stopDist); // 需投入保證金
-  const exposure = margin * leverage;               // 實際倉位USD
-  const qty      = exposure / entry;                // 幣數量
-  const tp1      = d.resistance;
-  const tp2      = tp1 * 1.12;
-  const rr       = ((tp1 - entry) / (entry - stopLoss)).toFixed(2);
-  const maxLossCheck = exposure * stopDist;
 
-  document.getElementById('posResult').innerHTML = `
-    <div class="pos-result-grid">
+  const totalMargin = maxLoss / (leverage * stopDist);
+  const tp1 = d.resistance || entry * 1.15;
+  const tp2 = tp1 * 1.12;
+  const tp3 = tp1 * 1.25;
+  const rr  = ((tp1 - entry) / (entry - stopBase * 0.97)).toFixed(2);
+
+  const batches = _calcBatches(entry, stopBase, maxLoss, leverage, _posMode);
+
+  let html = '';
+  if (_posMode === 'single') {
+    const margin = totalMargin;
+    const qty = (margin * leverage) / entry;
+    html = `<div class="pos-result-grid">
       <div class="pos-item"><div class="pos-label">進場價</div><div class="pos-val">${fmtPrice(entry)}</div></div>
-      <div class="pos-item"><div class="pos-label">止損價</div><div class="pos-val" style="color:var(--red)">${fmtPrice(stopLoss)}</div></div>
-      <div class="pos-item"><div class="pos-label">止損距離</div><div class="pos-val">${(stopDist*100).toFixed(1)}%</div></div>
-      <div class="pos-item"><div class="pos-label">建議倉位（USD）</div><div class="pos-val" style="color:var(--acc)">$${margin.toFixed(0)}</div></div>
+      <div class="pos-item"><div class="pos-label">止損價</div><div class="pos-val" style="color:var(--red)">${fmtPrice(stopBase*0.97)}</div></div>
+      <div class="pos-item"><div class="pos-label">建議保證金</div><div class="pos-val" style="color:var(--acc)">$${margin.toFixed(0)}</div></div>
       <div class="pos-item"><div class="pos-label">幣的數量</div><div class="pos-val">${qty.toFixed(4)}</div></div>
-      <div class="pos-item"><div class="pos-label">預期最大虧損</div><div class="pos-val" style="color:var(--red)">$${maxLossCheck.toFixed(1)}</div></div>
-      <div class="pos-item"><div class="pos-label">止盈1（阻力位）</div><div class="pos-val" style="color:var(--green)">${fmtPrice(tp1)}</div></div>
-      <div class="pos-item"><div class="pos-label">止盈2（+12%）</div><div class="pos-val" style="color:var(--green)">${fmtPrice(tp2)}</div></div>
-    </div>
-    <div class="pos-rr">風險回報比 1 : ${rr}</div>`;
+    </div>`;
+  } else {
+    batches.forEach(b => {
+      const m = totalMargin * b.pct / 100;
+      const q = (m * leverage) / b.entry;
+      html += `<div class="pos-batch">
+        <div class="pos-batch-title">${b.label} — ${b.condition}</div>
+        <div class="pos-batch-grid">
+          <div class="pos-item"><div class="pos-label">進場價</div><div class="pos-val">${fmtPrice(b.entry)}</div></div>
+          <div class="pos-item"><div class="pos-label">止損</div><div class="pos-val" style="color:var(--red)">${fmtPrice(b.stop)}</div></div>
+          <div class="pos-item"><div class="pos-label">保證金</div><div class="pos-val" style="color:var(--acc)">$${m.toFixed(0)}</div></div>
+          <div class="pos-item"><div class="pos-label">幣量</div><div class="pos-val">${q.toFixed(4)}</div></div>
+        </div>
+      </div>`;
+    });
+  }
+
+  // 止盈計畫
+  html += `<div style="background:var(--bg3);border-radius:10px;padding:10px 12px;margin-bottom:8px">
+    <div style="font-size:11px;font-weight:700;color:#0ecb81;margin-bottom:6px">止盈計畫</div>
+    <div class="pos-tp-row"><span style="font-size:12px;color:var(--muted)">止盈1 · 賣50%</span><span style="font-weight:700;color:#0ecb81">${fmtPrice(tp1)}</span></div>
+    <div class="pos-tp-row"><span style="font-size:12px;color:var(--muted)">止盈2 · 賣30%</span><span style="font-weight:700;color:#0ecb81">${fmtPrice(tp2)}</span></div>
+    <div class="pos-tp-row"><span style="font-size:12px;color:var(--muted)">止盈3 · 剩20% 追蹤止盈</span><span style="font-weight:700;color:#0ecb81">≥ ${fmtPrice(tp3)}</span></div>
+  </div>`;
+
+  html += `<div class="pos-rr">風險回報比 1 : ${rr}  |  最大虧損 $${maxLoss}</div>`;
+  document.getElementById('posResult').innerHTML = html;
 }
 
 function copyPosition() {
@@ -1699,22 +1773,43 @@ function copyPosition() {
   const maxLoss  = parseFloat(document.getElementById('posMaxLoss').value) || 200;
   const leverage = parseFloat(document.getElementById('posLeverage').value) || 1;
   const entry    = d.price;
-  const stopLoss = d.support2 * 0.97;
-  const stopDist = (entry - stopLoss) / entry;
-  const margin   = maxLoss / (leverage * stopDist);
-  const exposure = margin * leverage;
-  const qty      = exposure / entry;
-  const tp1      = d.resistance;
-  const tp2      = tp1 * 1.12;
-  const rr       = ((tp1 - entry) / (entry - stopLoss)).toFixed(2);
-  const lvText   = leverage === 1 ? '現貨 1x' : `合約 ${leverage}x`;
-  const text = `【LANA 倉位計算】${d.coin}  ${new Date().toLocaleString('zh-TW')}
-進場：${fmtPrice(entry)}  止損：${fmtPrice(stopLoss)}（-${(stopDist*100).toFixed(1)}%）
-類型：${lvText}  最大虧損：$${maxLoss}
-建議保證金：$${margin.toFixed(0)}  幣量：${qty.toFixed(4)}
-止盈1：${fmtPrice(tp1)}  止盈2：${fmtPrice(tp2)}
-風險回報比：1:${rr}`;
-  navigator.clipboard.writeText(text).then(() => toast('📋 已複製到剪貼簿'));
+  const stopBase = d.support2 || entry * 0.85;
+  const stopDist = (entry - stopBase * 0.97) / entry;
+  if (stopDist <= 0) return;
+  const totalMargin = maxLoss / (leverage * stopDist);
+  const tp1 = d.resistance || entry * 1.15;
+  const tp2 = tp1 * 1.12;
+  const tp3 = tp1 * 1.25;
+  const rr  = ((tp1 - entry) / (entry - stopBase * 0.97)).toFixed(2);
+  const lvText = leverage === 1 ? '現貨 1x' : `合約 ${leverage}x`;
+  const modeLabel = {single:'一次進場', split2:'分2批進場', split3:'分3批進場', test:'試水加碼'}[_posMode];
+  const batches = _calcBatches(entry, stopBase, maxLoss, leverage, _posMode);
+
+  let lines = [
+    '========================',
+    `[${d.coin}] 智能倉位計畫`,
+    `總最大虧損：$${maxLoss}  ${lvText}`,
+    `進場模式：${modeLabel}`,
+    '',
+  ];
+  batches.forEach(b => {
+    const m = totalMargin * b.pct / 100;
+    const q = (m * leverage) / b.entry;
+    lines.push(`${b.label}`);
+    lines.push(`  進場價：${fmtPrice(b.entry)}  保證金：$${m.toFixed(0)}  幣量：${q.toFixed(4)}`);
+    lines.push(`  止損：${fmtPrice(b.stop)}  條件：${b.condition}`);
+    lines.push('');
+  });
+  lines.push('止盈計畫');
+  lines.push(`  止盈1：${fmtPrice(tp1)} → 賣50%`);
+  lines.push(`  止盈2：${fmtPrice(tp2)} → 賣30%`);
+  lines.push(`  止盈3：≥${fmtPrice(tp3)} → 剩20%追蹤止盈`);
+  lines.push('');
+  lines.push(`風險回報比：1:${rr}`);
+  lines.push('========================');
+  lines.push('⚠️ 僅供參考，不構成投資建議');
+
+  navigator.clipboard.writeText(lines.join('\n')).then(() => toast('📋 完整計畫已複製'));
 }
 
 function openBinance(coin) {
