@@ -785,13 +785,15 @@ function _scoreColor(s) {
 
 async function loadScanScores(coins) {
   try {
+    toast(`⏳ 載入 ${coins.length} 幣分數...`, 3000);
     const r = await fetch('/api/quick_scores', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({coins})
     });
     const j = await r.json();
-    if (!j.ok) return;
+    toast(`✅ API 回傳 ${Object.keys(j.scores||{}).length} 分數`, 3000);
+    if (!j.ok) { toast('❌ API 錯誤: ' + j.error, 5000); return; }
     Object.entries(j.scores).forEach(([coin, d]) => {
       if (d.score === null) return;
       _scanScores[coin] = { score: d.score, grade: d.grade };
@@ -812,6 +814,7 @@ async function loadScanScores(coins) {
       document.getElementById('btnSortScore').style.display = '';
     }
   } catch(e) {
+    toast(`❌ 分數載入失敗: ${e.message}`, 5000);
     console.error('loadScanScores error', e);
   }
 }
