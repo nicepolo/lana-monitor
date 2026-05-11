@@ -454,8 +454,15 @@ def fetch_market_scan():
             continue
         results.append({"coin": coin, "price": prc,
                         "change": round(chg, 2), "volume": round(vol)})
-    results.sort(key=lambda x: x["change"], reverse=True)
-    return results[:30]
+    # 去重（同一幣只留第一筆）
+    seen = set()
+    unique = []
+    for r in results:
+        if r["coin"] not in seen:
+            seen.add(r["coin"])
+            unique.append(r)
+    unique.sort(key=lambda x: x["change"], reverse=True)
+    return unique[:30]
 
 # ── 深度分析 ────────────────────────────────────────────────
 def analyze_coin(coin):
@@ -614,6 +621,51 @@ def api_scan():
                         "ts": datetime.now().strftime("%Y-%m-%d %H:%M")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/api/quick_scores", methods=["POST"])
+def api_quick_scores():
+    """批次快速計算多幣 LANA 分數（只用 klines，不打 futures API，速度快）"""
+    body = request.json or {}
+    coins = body.get("coins", [])[:30]
+
+    def _quick_score(coin):
+        try:
+            symbol = coin.upper() + "USDT"
+            klines  = fetch_klines(symbol)
+            closes  = [k["c"] for k in klines]
+            volumes = [k["v"] for k in klines]
+            ma7  = ma(closes, 7)
+            ma30 = ma(closes, 30)
+            ma120= ma(closes, 120)
+            r14  = rsi(closes)
+            bb_up, bb_mid, bb_lo = bollinger(closes)
+            vr   = vol_ratio(volumes)
+            price = closes[-1]
+            bb_pos = (
+                "above_upper" if bb_up and price > bb_up else
+                "upper_half"  if bb_up and bb_mid and price > bb_mid else
+                "lower_half"  if bb_lo and bb_mid and price > bb_lo else
+                "below_lower"
+            )
+            risks = []
+            if r14 and r14 > 70: risks.append("RSI超買")
+            if bb_up and price > bb_up: risks.append("突破布林上軌")
+            if vr and vr < 0.8: risks.append("量能萎縮")
+            ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+            score = ls["total"]
+            grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
+                     "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
+            return {"coin": coin, "score": score, "grade": grade}
+        except Exception:
+            return {"coin": coin, "score": None, "grade": None}
+
+    try:
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            results = list(ex.map(_quick_score, coins))
+        return jsonify({"ok": True, "scores": {r["coin"]: r for r in results}})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/email", methods=["POST"])
 def api_email():

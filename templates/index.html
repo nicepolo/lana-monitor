@@ -784,35 +784,35 @@ function _scoreColor(s) {
 }
 
 async function loadScanScores(coins) {
-  const BATCH = 5;
-  for (let i = 0; i < coins.length; i += BATCH) {
-    const batch = coins.slice(i, i + BATCH);
-    await Promise.all(batch.map(coin =>
-      fetch(`/api/analyze/${coin}`)
-        .then(r => r.json())
-        .then(j => {
-          if (j.lana_score !== undefined) {
-            _scanScores[coin] = { score: j.lana_score, grade: j.lana_grade };
-            _scanDataMap[coin] = { ..._scanDataMap[coin], lana_score: j.lana_score, lana_grade: j.lana_grade };
-            const el = document.getElementById(`sc-${coin}`);
-            if (el) {
-              const c = _scoreColor(j.lana_score);
-              el.textContent = `LANA ${j.lana_score}`;
-              el.className = 'scan-score';
-              el.style.color = c;
-              el.style.background = c + '22';
-            }
-          }
-        })
-        .catch(() => {
-          const el = document.getElementById(`sc-${coin}`);
-          if (el) { el.textContent = '--'; el.className = 'scan-score loading'; }
-        })
-    ));
-  }
-  // 所有分數載入完後顯示排序按鈕
-  if (Object.keys(_scanScores).length > 0) {
-    document.getElementById('btnSortScore').style.display = '';
+  try {
+    const r = await fetch('/api/quick_scores', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({coins})
+    });
+    const j = await r.json();
+    if (!j.ok) return;
+    Object.entries(j.scores).forEach(([coin, d]) => {
+      if (d.score === null) return;
+      _scanScores[coin] = { score: d.score, grade: d.grade };
+      if (_scanDataMap[coin]) {
+        _scanDataMap[coin].lana_score = d.score;
+        _scanDataMap[coin].lana_grade = d.grade;
+      }
+      const el = document.getElementById(`sc-${coin}`);
+      if (el) {
+        const c = _scoreColor(d.score);
+        el.textContent = `LANA ${d.score}`;
+        el.className = 'scan-score';
+        el.style.color = c;
+        el.style.background = c + '22';
+      }
+    });
+    if (Object.keys(_scanScores).length > 0) {
+      document.getElementById('btnSortScore').style.display = '';
+    }
+  } catch(e) {
+    console.error('loadScanScores error', e);
   }
 }
 
