@@ -966,19 +966,19 @@ SECTOR_COLORS = {
 }
 
 def compute_sector_heat():
-    # 一次抓所有板塊幣的 24h ticker
-    # 注意：CDN 不支援 symbols 批次查詢，直接用 api.binance.com
-    all_coins = list({c for cs in SECTOR_COINS.values() for c in cs})
-    import urllib.parse
-    symbols_json = json.dumps([f"{c}USDT" for c in all_coins])
-    url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={urllib.parse.quote(symbols_json)}"
+    # 取全部 ticker（不帶 symbol 參數），在本地過濾板塊幣
+    # 與 fetch_market_scan() 相同做法，CDN 支援無參數全量查詢
+    all_sector_coins = {c for cs in SECTOR_COINS.values() for c in cs}
     try:
-        r = requests.get(url, timeout=15)
+        r = _get(f"{BINANCE_BASE}/api/v3/ticker/24hr", timeout=20)
         data = r.json()
-        if isinstance(data, list):
-            tickers = {t["symbol"][:-4]: float(t.get("priceChangePercent", 0)) for t in data}
-        else:
-            tickers = {}
+        tickers = {}
+        for t in data:
+            sym = t.get("symbol", "")
+            if sym.endswith("USDT"):
+                coin = sym[:-4]
+                if coin in all_sector_coins:
+                    tickers[coin] = float(t.get("priceChangePercent", 0))
     except Exception:
         tickers = {}
 
@@ -1046,12 +1046,12 @@ def compute_entry_index():
         'PEPE','WIF','BONK','FET','TAO','RNDR','GRT','ONDO','JUP','NEAR',
     ]
     try:
-        import urllib.parse as _up
-        _sym = json.dumps([f"{c}USDT" for c in SCAN_COINS])
+        scan_set = {f"{c}USDT" for c in SCAN_COINS}
         r2 = requests.get(
-            f"https://api.binance.com/api/v3/ticker/24hr?symbols={_up.quote(_sym)}",
-            timeout=15)
-        tickers = r2.json() if isinstance(r2.json(), list) else []
+            "https://data-api.binance.vision/api/v3/ticker/24hr",
+            timeout=20)
+        all_tickers = r2.json() if isinstance(r2.json(), list) else []
+        tickers = [t for t in all_tickers if t.get("symbol", "") in scan_set]
         movers = sum(1 for t in tickers if abs(float(t.get('priceChangePercent', 0))) >= 3)
         if movers > 10:
             score += 30; adj2 = +30; note2 = '板塊輪動明顯'
