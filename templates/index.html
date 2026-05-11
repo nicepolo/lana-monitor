@@ -769,7 +769,8 @@ function renderScan(data) {
   const allCoins = data.map(d => d.coin);
   _scanScores = {};
   _sortByScore = false;
-  document.getElementById('btnSortScore').style.display = 'none';
+  const _sb = document.getElementById('btnSortScore');
+  if (_sb) _sb.style.display = 'none';
   loadScanScores(allCoins);
 }
 
@@ -811,7 +812,8 @@ async function loadScanScores(coins) {
       }
     });
     if (Object.keys(_scanScores).length > 0) {
-      document.getElementById('btnSortScore').style.display = '';
+      const sb = document.getElementById('btnSortScore');
+      if (sb) sb.style.display = '';
     }
   } catch(e) {
     toast(`❌ 分數載入失敗: ${e.message}`, 5000);
