@@ -771,7 +771,27 @@ function renderScan(data) {
   _sortByScore = false;
   const _sb = document.getElementById('btnSortScore');
   if (_sb) _sb.style.display = 'none';
-  loadScanScores(allCoins);
+  // 直接從 scan data 拿分數（後端已計算好）
+  data.forEach(d => {
+    if (d.lana_score != null) {
+      _scanScores[d.coin] = { score: d.lana_score, grade: d.lana_grade };
+      const el = document.getElementById(`sc-${d.coin}`);
+      if (el) {
+        const c = _scoreColor(d.lana_score);
+        el.textContent = `LANA ${d.lana_score}`;
+        el.className = 'scan-score';
+        el.style.color = c;
+        el.style.background = c + '22';
+      }
+    }
+  });
+  if (Object.keys(_scanScores).length > 0) {
+    const sb2 = document.getElementById('btnSortScore');
+    if (sb2) sb2.style.display = '';
+  }
+  // 若後端未計算到某些幣，再補抓
+  const missing = data.filter(d => d.lana_score == null).map(d => d.coin);
+  if (missing.length) loadScanScores(missing);
 }
 
 let _scanScores = {};

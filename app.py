@@ -595,6 +595,41 @@ def api_watchlist_remove():
     save_watchlist(coins)
     return jsonify({"ok": True, "coins": coins})
 
+def _quick_score_one(coin):
+    """用 klines 快速算 LANA 分數（不含 futures），供掃描列表用"""
+    try:
+        symbol = coin.upper() + "USDT"
+        klines  = fetch_klines(symbol)
+        if not klines:
+            return coin, None, None
+        closes  = [k["c"] for k in klines]
+        volumes = [k["v"] for k in klines]
+        ma7  = ma(closes, 7)
+        ma30 = ma(closes, 30)
+        ma120= ma(closes, 120)
+        r14  = rsi(closes)
+        bb_up, bb_mid, bb_lo = bollinger(closes)
+        vr   = vol_ratio(volumes)
+        price = closes[-1]
+        bb_pos = (
+            "above_upper" if bb_up and price > bb_up else
+            "upper_half"  if bb_up and bb_mid and price > bb_mid else
+            "lower_half"  if bb_lo and bb_mid and price > bb_lo else
+            "below_lower"
+        )
+        risks = []
+        if r14 and r14 > 70: risks.append("RSI超買")
+        if bb_up and price > bb_up: risks.append("突破布林上軌")
+        if vr and vr < 0.8: risks.append("量能萎縮")
+        ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+        score = ls["total"]
+        grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
+                 "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
+        return coin, score, grade
+    except Exception:
+        return coin, None, None
+
+
 @app.route("/api/scan")
 def api_scan():
     try:
@@ -613,6 +648,16 @@ def api_scan():
                                  "change": round(chg, 2), "volume": round(vol)})
                 except Exception:
                     pass
+        # 平行計算所有幣的快速 LANA 分數
+        all_coins = [d['coin'] for d in data]
+        score_map = {}
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for coin, score, grade in ex.map(_quick_score_one, all_coins):
+                if score is not None:
+                    score_map[coin] = {"lana_score": score, "lana_grade": grade}
+        for d in data:
+            if d['coin'] in score_map:
+                d.update(score_map[d['coin']])
         # 觀察名單置頂
         wl_set = set(wl)
         data.sort(key=lambda x: (0 if x['coin'] in wl_set else 1, -x['change']))
