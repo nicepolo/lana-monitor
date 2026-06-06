@@ -1009,7 +1009,8 @@ function renderAnalysis(d) {
     <div class="card">
       <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
         <h2>🤖 AI 多空建議</h2>
-        <button id="btnAI"
+        <button id="btnAI" data-coin="${d.coin}" data-price="${d.price||0}" data-chg="${d.change_24h||0}"
+          onclick="var b=this;runAIAnalysis(b.dataset.coin, parseFloat(b.dataset.price), parseFloat(b.dataset.chg))"
           style="background:var(--acc);color:#000;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
           分析
         </button>
