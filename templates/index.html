@@ -1006,6 +1006,20 @@ function renderAnalysis(d) {
   <div class="risk-banner risk-${d.risk_level}">${riskLabels[d.risk_level] || d.risk_level}</div>
 
   <div class="content">
+    <div class="card" id="aiCard-\${d.coin}">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+        <h2>🤖 AI 多空建議</h2>
+        <button id="btnAI-\${d.coin}" onclick="runAIAnalysis('\${d.coin}', \${d.price}, \${d.change_24h || 0})"
+          style="background:var(--acc);color:#000;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
+          分析
+        </button>
+      </div>
+      <div class="card-body" id="aiResult-\${d.coin}">
+        <div style="text-align:center;color:var(--muted);font-size:12px;padding:8px 0">
+          點「分析」讓 AI 判斷多空方向
+        </div>
+      </div>
+    </div>
     <!-- LANA Score -->
     <div class="card ls-card">
       <div class="ls-header">
@@ -1033,22 +1047,6 @@ function renderAnalysis(d) {
       <div class="ls-advice">${buildLsAdvice(d.lana_score, ld, d)}</div>
     </div>
 
-
-    <!-- AI 多空建議 -->
-    <div class="card" id="aiCard-${d.coin}">
-      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
-        <h2>🤖 AI 多空建議</h2>
-        <button id="btnAI-${d.coin}" onclick="runAIAnalysis('${d.coin}', ${d.price}, ${d.change_24h || 0})"
-          style="background:var(--acc);color:#000;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
-          分析
-        </button>
-      </div>
-      <div class="card-body" id="aiResult-${d.coin}">
-        <div style="text-align:center;color:var(--muted);font-size:12px;padding:8px 0">
-          點「分析」讓 AI 判斷多空方向
-        </div>
-      </div>
-    </div>
 
     <!-- 基本數據 -->
     <div class="card">
