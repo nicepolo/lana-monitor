@@ -2247,20 +2247,28 @@ async function loadMemeSignals() {
     const res = await fetch(MEME_API, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error('API 無回應');
     const data = await res.json();
-    renderMemeSignals(data.signals || []);
+    renderMemeSignals(data.signals || [], data.all_results || [], data.last_update || '');
   } catch(e) {
-    // API 還沒開放時顯示示範卡片
-    renderMemeDemo();
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:12px">⚠️ 無法連線掃描服務，請稍後再試</div>';
   }
 }
 
-function renderMemeSignals(signals) {
+function renderMemeSignals(signals, allResults, lastUpdate) {
   const list = document.getElementById('memeList');
-  if (!signals.length) {
-    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">目前無達標訊號（分數 < 45）<br><span style="font-size:11px">下次掃描約 15 分鐘後</span></div>';
-    return;
+  const timeStr = lastUpdate ? `最後掃描：${lastUpdate}` : '';
+  
+  if (signals.length > 0) {
+    // 有達標訊號
+    list.innerHTML = `<div style="font-size:11px;color:var(--muted);text-align:right;padding:0 4px 8px">${timeStr}</div>` 
+      + signals.map(s => renderMemeCard(s)).join('');
+  } else if (allResults && allResults.length > 0) {
+    // 無達標訊號，顯示所有幣的現況
+    list.innerHTML = `<div style="background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--muted)">`
+      + `⚠️ 目前無 60 分以上訊號，以下為所有幣現況（供參考）<br><span style="font-size:10px">${timeStr}</span></div>`
+      + allResults.map(s => renderMemeCard(s)).join('');
+  } else {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">掃描中，請稍候...<br><span style="font-size:11px">' + timeStr + '</span></div>';
   }
-  list.innerHTML = signals.map(s => renderMemeCard(s)).join('');
 }
 
 function renderMemeCard(s) {
