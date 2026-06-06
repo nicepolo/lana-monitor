@@ -250,6 +250,7 @@
   <div class="tab" onclick="switchTab('watchlist')">觀察名單</div>
   <div class="tab" onclick="switchTab('journal')">📔 日誌</div>
   <div class="tab" onclick="switchTab('backtest')">📊 回測</div>
+  <div class="tab" onclick="switchTab('meme')">🐕 土狗</div>
 </div>
 
 <!-- ── 市場掃描 ── -->
@@ -2212,5 +2213,127 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSectorHeat();
 });
 </script>
+
+<!-- ── 土狗訊號 ── -->
+<div id="page-meme" class="page">
+  <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid #2b3046;display:flex;align-items:center;justify-content:space-between">
+    <span style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.5px">🐕 MEME 幣 AI 多空訊號</span>
+    <button class="btn" style="font-size:11px;padding:6px 12px" onclick="loadMemeSignals()">🔄 刷新</button>
+  </div>
+
+  <!-- 說明列 -->
+  <div style="padding:10px 16px;background:#1a1f2e;border-bottom:1px solid #2b3046;font-size:11px;color:var(--muted)">
+    監控：LUNA · LUNC · DOGE · SHIB · PEPE · FLOKI · BONK · WIF · NEIRO · MEME &nbsp;|&nbsp; 每 15 分鐘更新
+  </div>
+
+  <!-- 訊號列表 -->
+  <div id="memeList" style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+    <div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">
+      點擊「刷新」載入最新土狗幣訊號
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 土狗訊號功能 ──────────────────────────────────────────
+const MEME_API = 'https://lana-funding-arb-production.up.railway.app/api/meme_signals';
+
+async function loadMemeSignals() {
+  const list = document.getElementById('memeList');
+  list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)">⏳ 載入中...</div>';
+  
+  try {
+    // 嘗試從 meme scanner API 取資料
+    const res = await fetch(MEME_API, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error('API 無回應');
+    const data = await res.json();
+    renderMemeSignals(data.signals || []);
+  } catch(e) {
+    // API 還沒開放時顯示示範卡片
+    renderMemeDemo();
+  }
+}
+
+function renderMemeSignals(signals) {
+  const list = document.getElementById('memeList');
+  if (!signals.length) {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">目前無達標訊號（分數 < 45）<br><span style="font-size:11px">下次掃描約 15 分鐘後</span></div>';
+    return;
+  }
+  list.innerHTML = signals.map(s => renderMemeCard(s)).join('');
+}
+
+function renderMemeCard(s) {
+  const dirColor = s.direction === 'LONG' ? 'var(--green)' : s.direction === 'SHORT' ? 'var(--red)' : 'var(--muted)';
+  const dirIcon  = s.direction === 'LONG' ? '▲ 做多' : s.direction === 'SHORT' ? '▼ 做空' : '— 觀望';
+  const changeColor = (s.change_24h || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+  const scoreColor = s.score >= 70 ? 'var(--green)' : s.score >= 50 ? 'var(--yellow)' : 'var(--muted)';
+
+  return `
+  <div class="card">
+    <div class="card-header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:15px;font-weight:700;color:var(--acc)">${s.symbol}/USDT</span>
+        <span style="font-size:10px;background:#2b3046;padding:2px 6px;border-radius:4px;color:var(--muted)">${(s.exchange||'').toUpperCase()}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:${dirColor}">${dirIcon}</span>
+        <span style="font-size:11px;color:${scoreColor};font-weight:700">${s.score}分</span>
+      </div>
+    </div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:20px;font-weight:700">${s.price || 'N/A'}</span>
+        <span style="font-size:13px;color:${changeColor};font-weight:600">${(s.change_24h||0) >= 0 ? '+' : ''}${s.change_24h || 0}%</span>
+      </div>
+      <div style="background:#0d1117;border-radius:8px;padding:10px;font-size:12px;color:var(--muted);line-height:1.8">
+        <div style="color:var(--text);font-weight:600;margin-bottom:4px">📌 ${s.summary || ''}</div>
+        <div>${s.reason || ''}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px">
+        <div style="background:#1a2030;border-radius:6px;padding:7px">
+          <div style="color:var(--muted);margin-bottom:2px">入場區間</div>
+          <div style="color:var(--text);font-weight:600">${s.entry_zone || 'N/A'}</div>
+        </div>
+        <div style="background:#1a2030;border-radius:6px;padding:7px">
+          <div style="color:var(--muted);margin-bottom:2px">止損</div>
+          <div style="color:var(--red);font-weight:600">${s.stop_loss || 'N/A'}</div>
+        </div>
+        <div style="background:#1a2030;border-radius:6px;padding:7px">
+          <div style="color:var(--muted);margin-bottom:2px">目標1</div>
+          <div style="color:var(--green);font-weight:600">${s.target_1 || 'N/A'}</div>
+        </div>
+        <div style="background:#1a2030;border-radius:6px;padding:7px">
+          <div style="color:var(--muted);margin-bottom:2px">目標2</div>
+          <div style="color:var(--green);font-weight:600">${s.target_2 || 'N/A'}</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
+        <span>RSI: ${s.rsi_1h || 'N/A'} &nbsp;|&nbsp; 量能: ${s.vol_ratio || 'N/A'}x</span>
+        <span>⏱ ${s.timeframe || 'N/A'}</span>
+      </div>
+      <div style="font-size:10px;color:var(--red);background:#1a0a0a;border-radius:6px;padding:6px 8px">
+        ⚠️ ${s.risk_note || '土狗幣波動極大，嚴控倉位 ≤5%'}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMemeDemo() {
+  const demo = [
+    { symbol:'PEPE', exchange:'okx', direction:'LONG', score:68, change_24h:-7.2,
+      price:'0.00001234', summary:'超賣反彈機會', reason:'RSI 超賣 + 布林下軌支撐，量能放大 1.8x',
+      entry_zone:'0.00001220-0.00001234', stop_loss:'0.00001185', target_1:'0.00001290', target_2:'0.00001350',
+      rsi_1h:34.2, vol_ratio:1.8, timeframe:'4-8小時', risk_note:'土狗幣波動極大，嚴控倉位 ≤5%' },
+    { symbol:'DOGE', exchange:'okx', direction:'WATCH', score:48, change_24h:2.1,
+      price:'0.1823', summary:'盤整觀望', reason:'多空力道均衡，等待方向確認',
+      entry_zone:'等突破確認', stop_loss:'N/A', target_1:'N/A', target_2:'N/A',
+      rsi_1h:52.1, vol_ratio:0.9, timeframe:'等訊號', risk_note:'無明確方向，暫不操作' },
+  ];
+  const list = document.getElementById('memeList');
+  list.innerHTML = '<div style="text-align:center;padding:8px;color:var(--muted);font-size:11px;margin-bottom:8px">📡 示範模式（掃描服務啟動中）</div>' + demo.map(s => renderMemeCard(s)).join('');
+}
+</script>
+
 </body>
 </html>
