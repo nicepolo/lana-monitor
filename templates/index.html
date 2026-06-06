@@ -964,6 +964,11 @@ async function runAnalyze() {
     el.innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
   }
   document.getElementById("btnAnalyze").disabled = false;
+  // 綁定 AI 分析按鈕
+  const _aiBtn = document.getElementById("btnAI");
+  if (_aiBtn && d) {
+    _aiBtn.onclick = function() { runAIAnalysis(d.coin, d.price||0, d.change_24h||0); };
+  }
 }
 
 function renderAnalysis(d) {
@@ -1006,16 +1011,15 @@ function renderAnalysis(d) {
   <div class="risk-banner risk-${d.risk_level}">${riskLabels[d.risk_level] || d.risk_level}</div>
 
   <div class="content">
-    <div class="card" id="aiCard-${d.coin}">
+    <div class="card">
       <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
         <h2>🤖 AI 多空建議</h2>
-        <button id="btnAI-${d.coin}"
-          onclick="runAIAnalysis('${d.coin}', ${d.price||0}, ${d.change_24h||0})"
+        <button id="btnAI"
           style="background:var(--acc);color:#000;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">
           分析
         </button>
       </div>
-      <div class="card-body" id="aiResult-${d.coin}">
+      <div class="card-body" id="aiResult">
         <div style="text-align:center;color:var(--muted);font-size:12px;padding:8px 0">點「分析」讓 AI 判斷多空方向</div>
       </div>
     </div>
