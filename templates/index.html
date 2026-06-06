@@ -1223,6 +1223,14 @@ function renderAnalysis(d) {
   </div>`;
   // 渲染完後觸發倉位計算 + 風控鎖定狀態更新
   setTimeout(() => { calcPosition(); updatePosCalcLock(); }, 80);
+  // 綁定 AI 分析按鈕
+  setTimeout(function() {
+    var aiBtn = document.getElementById('btnAI');
+    if (aiBtn) {
+      var _coin = d.coin, _price = d.price||0, _chg = d.change_24h||0;
+      aiBtn.onclick = function() { runAIAnalysis(_coin, _price, _chg); };
+    }
+  }, 150);
 }
 
 function maRow(label, val, price) {
