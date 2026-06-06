@@ -2365,5 +2365,61 @@ function renderMemeDemo() {
 }
 </script>
 
+
+<script>
+// ── LANA AI 多空分析 ──────────────────────────────────────────
+async function runAIAnalysis(coin, price, change24h) {
+  var resultEl = document.getElementById('aiResult');
+  var btnEl    = document.getElementById('btnAI');
+  if (!resultEl) { alert('找不到結果區塊'); return; }
+  if (!coin)     { alert('幣名為空'); return; }
+
+  btnEl.disabled = true;
+  btnEl.textContent = '分析中...';
+  resultEl.innerHTML = '<div style="text-align:center;color:#888;font-size:12px;padding:16px">⏳ AI 分析中，約 5-10 秒...</div>';
+
+  try {
+    var res = await fetch('https://worker-production-5ed3.up.railway.app/api/ai_analyze', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ symbol: coin, price: price, change_24h: change24h })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var data = await res.json();
+    renderAIResult(data);
+  } catch(e) {
+    resultEl.innerHTML = '<div style="color:#f6465d;font-size:12px;padding:8px">⚠️ 分析失敗：' + e.message + '</div>';
+  }
+  btnEl.disabled = false;
+  btnEl.textContent = '重新分析';
+}
+
+function renderAIResult(r) {
+  var el = document.getElementById('aiResult');
+  if (!el) return;
+  var dirColor = r.direction === 'LONG' ? '#0ecb81' : r.direction === 'SHORT' ? '#f6465d' : '#848e9c';
+  var dirText  = r.direction === 'LONG' ? '▲ 做多' : r.direction === 'SHORT' ? '▼ 做空' : '— 觀望';
+  var scoreColor = r.score >= 70 ? '#0ecb81' : r.score >= 50 ? '#f0b90b' : '#848e9c';
+
+  el.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<span style="font-size:20px;font-weight:700;color:' + dirColor + '">' + dirText + '</span>' +
+      '<span style="font-size:13px;color:' + scoreColor + ';font-weight:700">' + (r.score||0) + '/100 &nbsp;' + (r.confidence||'') + '信心</span>' +
+    '</div>' +
+    '<div style="background:#0d1117;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;line-height:1.7">' +
+      '<div style="color:#f0b90b;font-weight:600;margin-bottom:4px">📌 ' + (r.summary||'') + '</div>' +
+      '<div style="color:#848e9c">' + (r.reason||'') + '</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11px;margin-bottom:8px">' +
+      '<div style="background:#1a2030;border-radius:6px;padding:7px"><div style="color:#848e9c;margin-bottom:2px">入場區間</div><div style="font-weight:600">' + (r.entry_zone||'N/A') + '</div></div>' +
+      '<div style="background:#1a2030;border-radius:6px;padding:7px"><div style="color:#848e9c;margin-bottom:2px">止損</div><div style="color:#f6465d;font-weight:600">' + (r.stop_loss||'N/A') + '</div></div>' +
+      '<div style="background:#1a2030;border-radius:6px;padding:7px"><div style="color:#848e9c;margin-bottom:2px">目標1</div><div style="color:#0ecb81;font-weight:600">' + (r.target_1||'N/A') + '</div></div>' +
+      '<div style="background:#1a2030;border-radius:6px;padding:7px"><div style="color:#848e9c;margin-bottom:2px">目標2</div><div style="color:#0ecb81;font-weight:600">' + (r.target_2||'N/A') + '</div></div>' +
+    '</div>' +
+    '<div style="font-size:11px;color:#848e9c;margin-bottom:6px">⏱ 預期持倉：' + (r.timeframe||'N/A') + '</div>' +
+    '<div style="font-size:10px;color:#f6465d;background:#1a0a0a;border-radius:6px;padding:6px 8px">⚠️ ' + (r.risk_note||'僅供參考，非投資建議') + '</div>';
+}
+</script>
+
 </body>
 </html>
