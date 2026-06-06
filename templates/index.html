@@ -2473,6 +2473,19 @@ function renderSocialSignals(signals, scanned, lastUpdate) {
   list.innerHTML = html;
 }
 
+function _dexLink(chain, addr) {
+  if (chain === 'solana') return 'https://raydium.io/swap/?inputCurrency=sol&outputCurrency=' + addr;
+  return 'https://pancakeswap.finance/swap?outputCurrency=' + addr;
+}
+
+function _binanceLink(chain, addr, symbol) {
+  // 幣安 Web3 錢包 swap deep link（Android）
+  if (chain === 'solana') {
+    return 'https://www.binance.com/en/web3wallet/swap?chain=solana&toToken=' + addr;
+  }
+  return 'https://www.binance.com/en/web3wallet/swap?chain=bsc&toToken=' + addr;
+}
+
 function renderSocialCard(t) {
   var listing = t.listing || {};
   var risk    = t.risk    || {};
@@ -2541,9 +2554,10 @@ function renderSocialCard(t) {
         '<span style="color:var(--muted);margin-left:6px">' + (risk.verdict||'') + '</span>' +
       '</div>' +
       // 操作按鈕
-      (addr ? '<div style="display:flex;gap:8px;font-size:11px">' +
+      (addr ? '<div style="display:flex;gap:6px;font-size:11px;flex-wrap:wrap">' +
         '<a href="' + explorerBase + addr + '" target="_blank" style="color:var(--acc);text-decoration:none;background:#1a1f2e;padding:5px 10px;border-radius:6px">🔍 查合約</a>' +
-        '<a href="' + dexBase + addr + '" target="_blank" style="color:#000;background:var(--acc);padding:5px 10px;border-radius:6px;font-weight:700;text-decoration:none">⚡ DEX買入</a>' +
+        '<a href="' + _dexLink(chain, addr) + '" target="_blank" style="color:#000;background:var(--acc);padding:5px 10px;border-radius:6px;font-weight:700;text-decoration:none">⚡ DEX買入</a>' +
+        '<a href="' + _binanceLink(chain, addr, t.symbol) + '" target="_blank" style="color:#000;background:#f0b90b;padding:5px 10px;border-radius:6px;font-weight:700;text-decoration:none">🟡 幣安買入</a>' +
       '</div>' : '') +
     '</div>' +
   '</div>';
