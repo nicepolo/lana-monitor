@@ -2383,7 +2383,7 @@ async function runAIAnalysis(coin, price, change24h) {
     var res = await fetch('https://worker-production-5ed3.up.railway.app/api/ai_analyze', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ symbol: coin, price: price, change_24h: change24h })
+      body: JSON.stringify({ symbol: coin, price: price, change_24h: change24h, try_binance: true })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var data = await res.json();
