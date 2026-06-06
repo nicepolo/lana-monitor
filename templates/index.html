@@ -964,11 +964,6 @@ async function runAnalyze() {
     el.innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
   }
   document.getElementById("btnAnalyze").disabled = false;
-  // 綁定 AI 分析按鈕
-  const _aiBtn = document.getElementById("btnAI");
-  if (_aiBtn && d) {
-    _aiBtn.onclick = function() { runAIAnalysis(d.coin, d.price||0, d.change_24h||0); };
-  }
 }
 
 function renderAnalysis(d) {
