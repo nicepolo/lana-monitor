@@ -251,6 +251,7 @@
   <div class="tab" onclick="switchTab('journal')">📔 日誌</div>
   <div class="tab" onclick="switchTab('backtest')">📊 回測</div>
   <div class="tab" onclick="switchTab('meme')">🐕 土狗</div>
+  <div class="tab" onclick="switchTab('social')">🚨 社群</div>
 </div>
 
 <!-- ── 市場掃描 ── -->
@@ -2418,6 +2419,134 @@ function renderAIResult(r) {
     '</div>' +
     '<div style="font-size:11px;color:#848e9c;margin-bottom:6px">⏱ 預期持倉：' + (r.timeframe||'N/A') + '</div>' +
     '<div style="font-size:10px;color:#f6465d;background:#1a0a0a;border-radius:6px;padding:6px 8px">⚠️ ' + (r.risk_note||'僅供參考，非投資建議') + '</div>';
+}
+</script>
+
+
+<!-- ── 社群訊號分頁 ── -->
+<div id="page-social" class="page">
+  <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid #2b3046;display:flex;align-items:center;justify-content:space-between">
+    <span style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.5px">🚨 土狗情緒訊號 | GeckoTerminal × OKX × Binance</span>
+    <button class="btn" style="font-size:11px;padding:6px 12px" onclick="loadSocialSignals()">🔄 刷新</button>
+  </div>
+  <div style="padding:8px 16px;background:#1a0a0a;border-bottom:1px solid #2b3046;font-size:11px;color:#f6465d">
+    ⚠️ 極高風險，隨時歸零。每筆 ≤ 1-3%，務必設止損。
+  </div>
+  <div id="socialList" style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+    <div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">點「刷新」載入最新社群訊號</div>
+  </div>
+</div>
+
+<script>
+const SOCIAL_API = 'https://web-production-950ec.up.railway.app/api/social_signals';
+
+async function loadSocialSignals() {
+  var list = document.getElementById('socialList');
+  list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)">⏳ 掃描中...</div>';
+  try {
+    var res = await fetch(SOCIAL_API, {signal: AbortSignal.timeout(10000)});
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var data = await res.json();
+    renderSocialSignals(data.signals || [], data.scanned || [], data.last_update || '');
+  } catch(e) {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:#f6465d;font-size:12px">⚠️ 無法連線掃描服務<br>' + e.message + '</div>';
+  }
+}
+
+function renderSocialSignals(signals, scanned, lastUpdate) {
+  var list = document.getElementById('socialList');
+  var timeStr = lastUpdate ? '最後掃描：' + lastUpdate : '';
+  var html = '<div style="font-size:11px;color:var(--muted);text-align:right;padding:0 0 8px">' + timeStr + '</div>';
+
+  var items = signals.length > 0 ? signals : scanned;
+  var isFiltered = signals.length === 0 && scanned.length > 0;
+
+  if (isFiltered) {
+    html += '<div style="background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--muted)">目前無高評分訊號，以下為全部掃描結果</div>';
+  }
+
+  if (items.length === 0) {
+    html += '<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">暫無資料，請稍後刷新</div>';
+  } else {
+    html += items.map(function(t) { return renderSocialCard(t); }).join('');
+  }
+  list.innerHTML = html;
+}
+
+function renderSocialCard(t) {
+  var listing = t.listing || {};
+  var risk    = t.risk    || {};
+  var trade   = t.trade   || {};
+
+  var direction  = trade.direction || 'WATCH';
+  var dirColor   = direction === 'LONG' ? '#0ecb81' : direction === 'SHORT' ? '#f6465d' : '#848e9c';
+  var dirText    = direction === 'LONG' ? '▲ 做多' : direction === 'SHORT' ? '▼ 做空' : '— 觀望';
+  var dirBg      = direction === 'LONG' ? '#0a2a1a' : direction === 'SHORT' ? '#2a0a0a' : '#1a1f2e';
+
+  var score      = risk.score || 0;
+  var scoreColor = score >= 70 ? '#0ecb81' : score >= 50 ? '#f0b90b' : '#848e9c';
+  var strength   = listing.strength || '';
+  var chg        = t.chg_1h || 0;
+  var chgColor   = chg >= 0 ? '#0ecb81' : '#f6465d';
+  var chain      = t.chain || 'bsc';
+  var chainEmoji = chain === 'solana' ? '🟣' : '🟡';
+
+  var explorerBase = chain === 'solana' ? 'https://solscan.io/token/' : 'https://bscscan.com/token/';
+  var dexBase      = chain === 'solana' ? 'https://raydium.io/swap/?inputCurrency=sol&outputCurrency=' : 'https://pancakeswap.finance/swap?outputCurrency=';
+  var addr         = t.token_addr || '';
+
+  return '<div class="card" style="border-left:3px solid ' + dirColor + '">' +
+    '<div class="card-header">' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:15px;font-weight:700;color:var(--acc)">' + t.symbol + '</span>' +
+        '<span style="font-size:10px">' + chainEmoji + '</span>' +
+        (t.is_new ? '<span style="font-size:10px;background:#f0b90b22;color:#f0b90b;padding:2px 5px;border-radius:4px">🆕新幣</span>' : '') +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<span style="font-size:12px;font-weight:700;color:' + dirColor + '">' + dirText + '</span>' +
+        '<span style="font-size:11px;color:' + scoreColor + '">' + score + '分</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card-body" style="display:flex;flex-direction:column;gap:8px">' +
+      // 價格列
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<span style="font-size:18px;font-weight:700">$' + (t.price||0).toPrecision(4) + '</span>' +
+        '<span style="color:' + chgColor + ';font-size:13px;font-weight:600">1H ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%</span>' +
+      '</div>' +
+      // 數據列
+      '<div style="display:flex;gap:12px;font-size:11px;color:var(--muted)">' +
+        '<span>量 $' + ((t.vol_1h||0)/1000).toFixed(0) + 'K</span>' +
+        '<span>流 $' + ((t.liquidity||0)/1000).toFixed(0) + 'K</span>' +
+        '<span>買 ' + (t.txns_1h||0) + '筆</span>' +
+      '</div>' +
+      // 交叉比對
+      '<div style="background:#1a1f2e;border-radius:6px;padding:8px;font-size:11px">' +
+        '<div style="color:var(--muted);margin-bottom:4px">📊 交叉比對 | ' + strength + '</div>' +
+        '<div>OKX：' + (listing.on_okx ? '✅ 已上架' : '❌ 未上架') + '　Binance：' + (listing.on_binance ? '✅ 已上架' : '❌ 未上架') + '</div>' +
+      '</div>' +
+      // 交易建議
+      '<div style="background:' + dirBg + ';border-radius:6px;padding:8px;font-size:11px">' +
+        '<div style="color:' + dirColor + ';font-weight:700;margin-bottom:6px">🎯 交易建議</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">' +
+          '<div><span style="color:var(--muted)">進場：</span><span style="font-weight:600">' + (trade.entry||'等確認') + '</span></div>' +
+          '<div><span style="color:var(--muted)">止損：</span><span style="color:#f6465d;font-weight:600">' + (trade.stop_loss||'N/A') + '</span></div>' +
+          '<div><span style="color:var(--muted)">目標1：</span><span style="color:#0ecb81;font-weight:600">' + (trade.target1||'N/A') + '</span></div>' +
+          '<div><span style="color:var(--muted)">目標2：</span><span style="color:#0ecb81;font-weight:600">' + (trade.target2||'N/A') + '</span></div>' +
+        '</div>' +
+        (trade.entry_note ? '<div style="color:var(--muted);margin-top:4px;font-size:10px">📌 ' + trade.entry_note + '</div>' : '') +
+      '</div>' +
+      // AI 分析
+      '<div style="font-size:11px">' +
+        '<span style="color:var(--acc);font-weight:600">' + (risk.summary||'') + '</span>' +
+        '<span style="color:var(--muted);margin-left:6px">' + (risk.verdict||'') + '</span>' +
+      '</div>' +
+      // 操作按鈕
+      (addr ? '<div style="display:flex;gap:8px;font-size:11px">' +
+        '<a href="' + explorerBase + addr + '" target="_blank" style="color:var(--acc);text-decoration:none;background:#1a1f2e;padding:5px 10px;border-radius:6px">🔍 查合約</a>' +
+        '<a href="' + dexBase + addr + '" target="_blank" style="color:#000;background:var(--acc);padding:5px 10px;border-radius:6px;font-weight:700;text-decoration:none">⚡ DEX買入</a>' +
+      '</div>' : '') +
+    '</div>' +
+  '</div>';
 }
 </script>
 
