@@ -1426,6 +1426,20 @@ def api_ai_analyze():
         return jsonify({"error": str(e)}), 500
 
 
+
+@app.route("/api/meme_signals")
+def api_meme_signals():
+    """Proxy 到 tender-laughter 內部服務取得 meme scanner 資料"""
+    try:
+        meme_url = os.getenv("MEME_SCANNER_URL", "http://tender-laughter:8080")
+        r = requests.get(f"{meme_url}/api/meme_signals", timeout=12)
+        resp = jsonify(r.json())
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+    except Exception as e:
+        return jsonify({"error": str(e), "signals": [], "last_scan": None}), 200
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "ts": datetime.now().isoformat()})
