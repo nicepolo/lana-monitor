@@ -1277,6 +1277,132 @@ def api_entry_index_telegram():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+
+
+@app.route("/api/ai_analyze", methods=["POST", "OPTIONS"])
+def api_ai_analyze():
+    # CORS
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        return resp
+
+    try:
+        body = request.get_json() or {}
+        coin      = body.get("symbol", "").upper()
+        price     = float(body.get("price", 0))
+        change24h = float(body.get("change_24h", 0))
+
+        if not coin:
+            return jsonify({"error": "symbol required"}), 400
+
+        # 取技術指標
+        try:
+            d = analyze_coin(coin)
+            rsi_1h  = d.get("rsi", 50) or 50
+            vol_r   = d.get("vol_ratio", 1.0) or 1.0
+            funding = d.get("funding_rate", 0) or 0
+            ma_bull = d.get("ma_bull", False)
+            bb_pos  = d.get("bb_position", "middle")
+            price   = price or d.get("price", 0)
+        except Exception:
+            rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; bb_pos = "middle"
+
+        trend = "up" if ma_bull else "neutral"
+
+        # 參考價位
+        sl_long  = round(price * 0.97, 6) if price else 0
+        t1_long  = round(price * 1.04, 6) if price else 0
+        t2_long  = round(price * 1.08, 6) if price else 0
+        sl_short = round(price * 1.03, 6) if price else 0
+        t1_short = round(price * 0.96, 6) if price else 0
+        t2_short = round(price * 0.92, 6) if price else 0
+
+        prompt = f"""你是專業加密貨幣短線交易員。分析 {coin}/USDT。
+
+現價：{price}，24H漲幅：{change24h:+.1f}%
+技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={'上升' if ma_bull else '中性'}，布林位置={bb_pos}，資金費率={funding:+.4f}%
+
+做多參考價位：止損 {sl_long}，目標1 {t1_long}，目標2 {t2_long}
+做空參考價位：止損 {sl_short}，目標1 {t1_short}，目標2 {t2_short}
+
+請給出明確交易建議。entry_zone/stop_loss/target_1/target_2 必須是真實數字。
+只輸出JSON：
+{{"direction":"LONG或SHORT或WATCH","score":0-100,"confidence":"高或中或低","summary":"一句話","reason":"技術原因","entry_zone":數字,"stop_loss":數字,"target_1":數字,"target_2":數字,"timeframe":"持倉時間","risk_note":"風險"}}"""
+
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+        gemini_key    = os.getenv("GEMINI_API_KEY", "")
+        result = None
+
+        # 先試 Gemini
+        if gemini_key:
+            try:
+                r = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                    headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": {"temperature": 0.2, "maxOutputTokens": 500}},
+                    timeout=20
+                )
+                if r.ok:
+                    text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                    text = text.strip().replace("```json","").replace("```","").strip()
+                    result = json.loads(text)
+                    result["model"] = "gemini-flash"
+            except Exception:
+                pass
+
+        # 備援 Claude
+        if not result and anthropic_key:
+            try:
+                r = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
+                             "content-type": "application/json"},
+                    json={"model": "claude-haiku-4-5", "max_tokens": 500,
+                          "messages": [{"role": "user", "content": prompt}]},
+                    timeout=20
+                )
+                if r.ok:
+                    text = r.json()["content"][0]["text"]
+                    text = text.strip().replace("```json","").replace("```","").strip()
+                    result = json.loads(text)
+                    result["model"] = "claude-haiku"
+            except Exception:
+                pass
+
+        if not result:
+            return jsonify({"error": "AI 分析失敗，請稍後再試"}), 503
+
+        # 確保數字欄位有值
+        def fix(v, default):
+            try:
+                f = float(v)
+                return f if f > 0 else default
+            except:
+                return default
+
+        direction = result.get("direction", "WATCH")
+        if price > 0:
+            if direction == "SHORT":
+                result["stop_loss"] = fix(result.get("stop_loss"), sl_short)
+                result["target_1"]  = fix(result.get("target_1"),  t1_short)
+                result["target_2"]  = fix(result.get("target_2"),  t2_short)
+            else:
+                result["stop_loss"] = fix(result.get("stop_loss"), sl_long)
+                result["target_1"]  = fix(result.get("target_1"),  t1_long)
+                result["target_2"]  = fix(result.get("target_2"),  t2_long)
+
+        resp = jsonify(result)
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok", "ts": datetime.now().isoformat()})
