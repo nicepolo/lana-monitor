@@ -1390,13 +1390,13 @@ def api_ai_analyze():
             elif vol_r >= 0.8: s_vol = 6
             else:              s_vol = 0
             # BB 15分（用 bb_pct_b）
-            bb_val = ind.get("bb_1h", {}).get("pct_b", 0.5) if isinstance(ind.get("bb_1h"), dict) else 0.5
+            bb_val = d.get("bb_position_val", 0.5) if isinstance(d.get("bb_position_val"), float) else 0.5
             if bb_val < 0.3:     s_bb = 15
             elif bb_val < 0.5:   s_bb = 12
             elif bb_val <= 0.7:  s_bb = 8
             else:                s_bb = 4
             # 資金費率 20分
-            fr_val = ind.get("funding_rate", 0)
+            fr_val = d.get("funding_rate", 0)
             if abs(fr_val) < 0.0001:    s_fr = 20
             elif abs(fr_val) < 0.0005:  s_fr = 15
             elif fr_val < -0.0005:      s_fr = 18
