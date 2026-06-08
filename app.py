@@ -1361,7 +1361,7 @@ def api_ai_analyze():
                     "https://api.anthropic.com/v1/messages",
                     headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
                              "content-type": "application/json"},
-                    json={"model": "claude-haiku-4-5", "max_tokens": 500,
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
                           "messages": [{"role": "user", "content": prompt}]},
                     timeout=20
                 )
@@ -1374,29 +1374,56 @@ def api_ai_analyze():
                 pass
 
         if not result:
-            # AI 失敗時用規則式備用，不回傳 503
-            direction = "LONG" if ma_bull and rsi_1h < 72 else "WATCH"
-            score = 0
-            if ma_bull: score += 25
-            if 50 <= rsi_1h < 70: score += 20
-            elif 40 <= rsi_1h < 50: score += 15
-            if vol_r >= 2.0: score += 20
-            elif vol_r >= 1.5: score += 16
-            elif vol_r >= 1.0: score += 12
-            score = min(100, score + 15)
+            # AI 失敗時用規則式備用（與 meme-scanner 同一套評分標準）
+            # 趨勢 25分
+            s_trend = 25 if ma_bull else 0
+            # RSI 20分
+            if 50 <= rsi_1h < 70:    s_rsi = 20
+            elif 40 <= rsi_1h < 50:  s_rsi = 15
+            elif 30 <= rsi_1h < 40:  s_rsi = 10
+            elif 70 <= rsi_1h < 80:  s_rsi = 8
+            else:                    s_rsi = 0
+            # 量能 20分
+            if vol_r >= 2.0:   s_vol = 20
+            elif vol_r >= 1.5: s_vol = 16
+            elif vol_r >= 1.0: s_vol = 12
+            elif vol_r >= 0.8: s_vol = 6
+            else:              s_vol = 0
+            # BB 15分（用 bb_pct_b）
+            bb_val = ind.get("bb_1h", {}).get("pct_b", 0.5) if isinstance(ind.get("bb_1h"), dict) else 0.5
+            if bb_val < 0.3:     s_bb = 15
+            elif bb_val < 0.5:   s_bb = 12
+            elif bb_val <= 0.7:  s_bb = 8
+            else:                s_bb = 4
+            # 資金費率 20分
+            fr_val = ind.get("funding_rate", 0)
+            if abs(fr_val) < 0.0001:    s_fr = 20
+            elif abs(fr_val) < 0.0005:  s_fr = 15
+            elif fr_val < -0.0005:      s_fr = 18
+            elif fr_val > 0.001:        s_fr = 2
+            else:                       s_fr = 8
+
+            score = max(0, min(100, s_trend + s_rsi + s_vol + s_bb + s_fr))
+            direction = "LONG" if score >= 70 and ma_bull and rsi_1h < 72 else "WATCH"
+
+            # 說明文字
+            trend_txt = "MA多頭排列" if ma_bull else "MA偏空整理"
+            rsi_txt = f"RSI={rsi_1h:.0f}{'超買' if rsi_1h>=70 else '偏強' if rsi_1h>=55 else '中性' if rsi_1h>=45 else '偏弱'}"
+            vol_txt = f"量能{vol_r:.1f}x{'放量' if vol_r>=1.5 else '平穩' if vol_r>=1.0 else '偏弱'}"
+
             result = {
                 "direction": direction,
                 "score": score,
-                "confidence": "高" if score >= 65 else "中" if score >= 45 else "低",
-                "summary": f"規則式分析：{'趨勢向上' if ma_bull else '中性盤整'}",
-                "reason": f"RSI={rsi_1h:.0f} 量能={vol_r:.1f}x 趨勢={'up' if ma_bull else 'neutral'}",
-                "entry_zone": round(price * 0.995, 6) if price else 0,
+                "confidence": "高" if score >= 70 else "中" if score >= 50 else "低",
+                "summary": f"{trend_txt}，{rsi_txt}，{vol_txt}",
+                "reason": f"{rsi_txt}；{vol_txt}；{'布林下軌支撐' if bb_val<0.3 else '布林中軌附近'}",
+                "entry_zone": round(price * 0.995, 4) if price else 0,
                 "stop_loss": sl_long,
                 "target_1": t1_long,
                 "target_2": t2_long,
                 "timeframe": "4-8小時",
-                "risk_note": "AI分析暫時不可用，規則式備用結果",
-                "model": "fallback"
+                "risk_note": "量能偏弱需觀察" if vol_r < 1.0 else ("RSI超買注意回調" if rsi_1h >= 70 else "嚴控倉位，設好止損"),
+                "model": "rules"
             }
 
         # 確保數字欄位有值
