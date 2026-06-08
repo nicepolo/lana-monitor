@@ -1374,7 +1374,30 @@ def api_ai_analyze():
                 pass
 
         if not result:
-            return jsonify({"error": "AI 分析失敗，請稍後再試"}), 503
+            # AI 失敗時用規則式備用，不回傳 503
+            direction = "LONG" if ma_bull and rsi_1h < 72 else "WATCH"
+            score = 0
+            if ma_bull: score += 25
+            if 50 <= rsi_1h < 70: score += 20
+            elif 40 <= rsi_1h < 50: score += 15
+            if vol_r >= 2.0: score += 20
+            elif vol_r >= 1.5: score += 16
+            elif vol_r >= 1.0: score += 12
+            score = min(100, score + 15)
+            result = {
+                "direction": direction,
+                "score": score,
+                "confidence": "高" if score >= 65 else "中" if score >= 45 else "低",
+                "summary": f"規則式分析：{'趨勢向上' if ma_bull else '中性盤整'}",
+                "reason": f"RSI={rsi_1h:.0f} 量能={vol_r:.1f}x 趨勢={'up' if ma_bull else 'neutral'}",
+                "entry_zone": round(price * 0.995, 6) if price else 0,
+                "stop_loss": sl_long,
+                "target_1": t1_long,
+                "target_2": t2_long,
+                "timeframe": "4-8小時",
+                "risk_note": "AI分析暫時不可用，規則式備用結果",
+                "model": "fallback"
+            }
 
         # 確保數字欄位有值
         def fix(v, default):
