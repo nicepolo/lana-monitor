@@ -375,12 +375,43 @@ def _get(url, params=None, timeout=15):
         r.raise_for_status()
         return r
 
+def _fetch_klines_okx(symbol, interval="1D", limit=150):
+    """OKX K線（Railway 不封鎖）"""
+    interval_map = {"1d": "1D", "1h": "1H", "4h": "4H", "15m": "15m",
+                    "1D": "1D", "1H": "1H", "4H": "4H"}
+    okx_bar = interval_map.get(interval, "1D")
+    sym = symbol.replace("USDT", "")
+    try:
+        import requests as _req
+        for inst_id in [f"{sym}-USDT-SWAP", f"{sym}-USDT"]:
+            r = _req.get(
+                "https://www.okx.com/api/v5/market/candles",
+                params={"instId": inst_id, "bar": okx_bar, "limit": limit},
+                timeout=10
+            )
+            data = r.json().get("data", [])
+            if data:
+                return [{"o": float(k[1]), "h": float(k[2]),
+                         "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
+                        for k in reversed(data)]
+    except Exception as e:
+        log.warning(f"OKX klines 失敗 {symbol}: {e}")
+    return []
+
+
 def fetch_klines(symbol, interval="1d", limit=150):
-    r = _get(f"{BINANCE_BASE}/api/v3/klines",
-             params={"symbol": symbol, "interval": interval, "limit": limit})
-    return [{"o": float(d[1]), "h": float(d[2]),
-             "l": float(d[3]), "c": float(d[4]), "v": float(d[5])}
-            for d in r.json()]
+    """OKX 優先，Binance 備用"""
+    data = _fetch_klines_okx(symbol, interval, limit)
+    if data:
+        return data
+    try:
+        r = _get(f"{BINANCE_BASE}/api/v3/klines",
+                 params={"symbol": symbol, "interval": interval, "limit": limit})
+        return [{"o": float(d[1]), "h": float(d[2]),
+                 "l": float(d[3]), "c": float(d[4]), "v": float(d[5])}
+                for d in r.json()]
+    except:
+        return []
 
 def fetch_ticker(symbol):
     r = _get(f"{BINANCE_BASE}/api/v3/ticker/24hr",
