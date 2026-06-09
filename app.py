@@ -414,9 +414,36 @@ def fetch_klines(symbol, interval="1d", limit=150):
         return []
 
 def fetch_ticker(symbol):
-    r = _get(f"{BINANCE_BASE}/api/v3/ticker/24hr",
-             params={"symbol": symbol})
-    return r.json()
+    """OKX 優先抓 24hr ticker"""
+    sym = symbol.replace("USDT", "")
+    try:
+        import requests as _req
+        for inst_id in [f"{sym}-USDT-SWAP", f"{sym}-USDT"]:
+            r = _req.get(
+                "https://www.okx.com/api/v5/market/ticker",
+                params={"instId": inst_id}, timeout=10
+            )
+            d = r.json().get("data", [])
+            if d:
+                t = d[0]
+                last = float(t.get("last", 0))
+                open24 = float(t.get("open24h", last))
+                chg_pct = ((last - open24) / open24 * 100) if open24 else 0
+                return {
+                    "lastPrice": str(last),
+                    "priceChangePercent": str(round(chg_pct, 2)),
+                    "quoteVolume": str(float(t.get("volCcy24h", t.get("vol24h", 0)))),
+                    "highPrice": str(t.get("high24h", last)),
+                    "lowPrice": str(t.get("low24h", last)),
+                }
+    except Exception as e:
+        log.warning(f"OKX ticker 失敗 {symbol}: {e}")
+    # Binance 備用
+    try:
+        r = _get(f"{BINANCE_BASE}/api/v3/ticker/24hr", params={"symbol": symbol})
+        return r.json()
+    except:
+        return {}
 
 def fetch_funding(symbol):
     try:
@@ -1146,13 +1173,16 @@ def compute_entry_index():
     score = 50
     details = {}
 
-    # 1. BTC 24h 波動
+    # 1. BTC 24h 波動（OKX）
     try:
         r = requests.get(
-            "https://data-api.binance.vision/api/v3/ticker/24hr",
-            params={"symbol": "BTCUSDT"}, timeout=10)
-        btc = r.json()
-        chg = float(btc.get('priceChangePercent', 0))
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": "BTC-USDT-SWAP"}, timeout=10)
+        d = r.json().get("data", [{}])[0]
+        last = float(d.get("last", 0))
+        open24 = float(d.get("open24h", last))
+        chg = ((last - open24) / open24 * 100) if open24 else 0
+        btc = {"lastPrice": str(last), "priceChangePercent": str(round(chg, 2))}
         vol = abs(chg)
         price = float(btc.get('lastPrice', 0))
         if vol < 1:
@@ -1176,11 +1206,12 @@ def compute_entry_index():
     try:
         scan_set = {f"{c}USDT" for c in SCAN_COINS}
         r2 = requests.get(
-            "https://data-api.binance.vision/api/v3/ticker/24hr",
-            timeout=20)
-        all_tickers = r2.json() if isinstance(r2.json(), list) else []
-        tickers = [t for t in all_tickers if t.get("symbol", "") in scan_set]
-        movers = sum(1 for t in tickers if abs(float(t.get('priceChangePercent', 0))) >= 3)
+            "https://www.okx.com/api/v5/market/tickers",
+            params={"instType": "SWAP"}, timeout=20)
+        all_tickers = r2.json().get("data", [])
+        def _okx_sym(inst): return inst.replace("-USDT-SWAP","")+"USDT"
+        tickers = [t for t in all_tickers if _okx_sym(t.get("instId","")) in scan_set]
+        movers = sum(1 for t in tickers if abs(float(t.get('sodUtc8', 0)) * 100) >= 3)
         if movers > 10:
             score += 30; adj2 = +30; note2 = '板塊輪動明顯'
         elif movers >= 5:
@@ -1194,9 +1225,9 @@ def compute_entry_index():
     # 3. BTC 成交量 vs 7日均量
     try:
         kr = requests.get(
-            "https://data-api.binance.vision/api/v3/klines",
-            params={"symbol": "BTCUSDT", "interval": "1d", "limit": 8}, timeout=10)
-        klines = kr.json()
+            "https://www.okx.com/api/v5/market/candles",
+            params={"instId": "BTC-USDT-SWAP", "bar": "1D", "limit": 8}, timeout=10)
+        klines = list(reversed(kr.json().get("data", [])))
         if len(klines) >= 8:
             today_vol = float(klines[-1][5])
             avg7 = sum(float(k[5]) for k in klines[-8:-1]) / 7
