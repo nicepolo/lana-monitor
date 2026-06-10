@@ -1490,25 +1490,50 @@ def api_ai_analyze():
             else:                       s_fr = 8
 
             score = max(0, min(100, s_trend + s_rsi + s_vol + s_bb + s_fr))
-            direction = "LONG" if score >= 70 and ma_bull and rsi_1h < 72 else "WATCH"
+
+            # 加入 K 線趨勢判斷（與 AI 版本一致）
+            kline_penalty = 0
+            kline_note = ""
+            try:
+                klines_4h = fetch_klines(f"{coin}USDT", "4h", 6)
+                if klines_4h and len(klines_4h) >= 4:
+                    recent_high = max(k["h"] for k in klines_4h[-4:])
+                    pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
+                    closes = [k["c"] for k in klines_4h[-4:]]
+                    rising = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+                    price_trend = "上升中" if rising >= 3 else ("下跌中" if rising <= 1 else "震盪")
+                    if pct_from_high < -5 and price_trend == "下跌中":
+                        kline_penalty = 30  # 強制降分
+                        kline_note = f"距高點{pct_from_high:.1f}%且K線下跌中，不宜做多"
+                    elif pct_from_high < -5:
+                        kline_penalty = 15
+                        kline_note = f"距高點{pct_from_high:.1f}%，謹慎操作"
+            except:
+                pass
+
+            score = max(0, score - kline_penalty)
+            direction = "LONG" if score >= 70 and ma_bull and rsi_1h < 72 and not kline_penalty else "WATCH"
 
             # 說明文字
             trend_txt = "MA多頭排列" if ma_bull else "MA偏空整理"
             rsi_txt = f"RSI={rsi_1h:.0f}{'超買' if rsi_1h>=70 else '偏強' if rsi_1h>=55 else '中性' if rsi_1h>=45 else '偏弱'}"
             vol_txt = f"量能{vol_r:.1f}x{'放量' if vol_r>=1.5 else '平穩' if vol_r>=1.0 else '偏弱'}"
+            summary = f"{trend_txt}，{rsi_txt}，{vol_txt}"
+            if kline_note:
+                summary = f"⚠️ {kline_note}"
 
             result = {
                 "direction": direction,
                 "score": score,
                 "confidence": "高" if score >= 70 else "中" if score >= 50 else "低",
-                "summary": f"{trend_txt}，{rsi_txt}，{vol_txt}",
-                "reason": f"{rsi_txt}；{vol_txt}；{'布林下軌支撐' if bb_val<0.3 else '布林中軌附近'}",
+                "summary": summary,
+                "reason": f"{rsi_txt}；{vol_txt}；{'布林下軌支撐' if bb_val<0.3 else '布林中軌附近'}{('；' + kline_note) if kline_note else ''}",
                 "entry_zone": round(price * 0.995, 4) if price else 0,
                 "stop_loss": sl_long,
                 "target_1": t1_long,
                 "target_2": t2_long,
                 "timeframe": "4-8小時",
-                "risk_note": "量能偏弱需觀察" if vol_r < 1.0 else ("RSI超買注意回調" if rsi_1h >= 70 else "嚴控倉位，設好止損"),
+                "risk_note": kline_note if kline_note else ("量能偏弱需觀察" if vol_r < 1.0 else ("RSI超買注意回調" if rsi_1h >= 70 else "嚴控倉位，設好止損")),
                 "model": "rules"
             }
 
