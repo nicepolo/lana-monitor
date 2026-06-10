@@ -1382,10 +1382,34 @@ def api_ai_analyze():
         t1_short = round(price * 0.96, 6) if price else 0
         t2_short = round(price * 0.92, 6) if price else 0
 
+        # 計算近期高低點和 K 線方向（4H K線最近 6 根）
+        try:
+            klines_4h = fetch_klines(f"{coin}USDT", "4h", 6)
+            if klines_4h and len(klines_4h) >= 4:
+                recent_high = max(k["h"] for k in klines_4h[-4:])
+                recent_low  = min(k["l"] for k in klines_4h[-4:])
+                pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
+                pct_from_low  = ((price - recent_low)  / recent_low  * 100) if recent_low  else 0
+                # 判斷近期趨勢：最後4根收盤是上升還是下降
+                closes = [k["c"] for k in klines_4h[-4:]]
+                rising_count = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+                price_trend = "上升中" if rising_count >= 3 else ("下跌中" if rising_count <= 1 else "震盪")
+                kline_context = f"近4根4H K線：{price_trend}，近期高點={recent_high}（現價距高點{pct_from_high:+.1f}%），近期低點={recent_low}（現價距低點{pct_from_low:+.1f}%）"
+            else:
+                kline_context = "K線資料不足"
+        except:
+            kline_context = "K線資料取得失敗"
+
         prompt = f"""你是專業加密貨幣短線交易員。分析 {coin}/USDT。
 
 現價：{price}，24H漲幅：{change24h:+.1f}%
 技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={'上升' if ma_bull else '中性'}，布林位置={bb_pos}，資金費率={funding:+.4f}%
+{kline_context}
+
+⚠️ 重要判斷原則：
+- 若現價距近期高點已跌超 5%，且 K 線方向為下跌中，應優先考慮 SHORT 或 WATCH，不應建議 LONG
+- 若 RSI 已在 70 以上 且 近4根 K 線持續下跌，代表高位放量出貨，危險信號
+- 只有價格在上升趨勢中（近期 K 線多根收紅且創新高）才建議 LONG
 
 做多參考價位：止損 {sl_long}，目標1 {t1_long}，目標2 {t2_long}
 做空參考價位：止損 {sl_short}，目標1 {t1_short}，目標2 {t2_short}
