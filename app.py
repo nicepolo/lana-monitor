@@ -525,7 +525,7 @@ def fetch_market_scan():
 # ── 深度分析 ────────────────────────────────────────────────
 def analyze_coin(coin):
     symbol = coin.upper() + "USDT"
-    klines  = fetch_klines(symbol)
+    klines  = fetch_klines(symbol, "1h", 150)  # 改用1H K線，與TG推送/土狗一致
     ticker  = fetch_ticker(symbol)
     closes  = [k["c"] for k in klines]
     volumes = [k["v"] for k in klines]
@@ -546,8 +546,9 @@ def analyze_coin(coin):
     vol24 = float(ticker.get("quoteVolume", 0))
     hi24  = float(ticker.get("highPrice", price))
     lo24  = float(ticker.get("lowPrice", price))
-    c7d   = (price / closes[-8]  - 1) * 100 if len(closes) >= 8  else None
-    c30d  = (price / closes[-31] - 1) * 100 if len(closes) >= 31 else None
+    # 1H K線：7日=168根，30日=720根（但只抓150根，30日改用150根近似）
+    c7d   = (price / closes[-168] - 1) * 100 if len(closes) >= 168 else None
+    c30d  = (price / closes[-150] - 1) * 100 if len(closes) >= 150 else None  # 近似（約6.25天）
 
     # 風險信號
     risks = []
@@ -557,7 +558,7 @@ def analyze_coin(coin):
     if gl_ls and top_ls and gl_ls > 1.1 and top_ls < 1.0:
                                        risks.append("散戶追多、大戶偏空")
     if funding and funding > 0.001:   risks.append("資金費率過高")
-    if c30d and c30d > 100:           risks.append("30日漲幅逾100%")
+    if c30d and c30d > 50:            risks.append("近期(約6天)漲幅逾50%，注意過熱")
 
     n = len(risks)
     risk_level = "extreme" if n >= 4 else "high" if n >= 3 else "medium" if n >= 2 else "low" if n >= 1 else "safe"
