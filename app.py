@@ -294,11 +294,11 @@ def bollinger(closes, n=20, k=2):
     return round(mid + k*std, 6), round(mid, 6), round(mid - k*std, 6)
 
 def vol_ratio(volumes):
-    if len(volumes) < 14:
+    """現量 / 過去20根均量（與 meme_scanner 定義一致）"""
+    if len(volumes) < 21:
         return None
-    r = sum(volumes[-7:]) / 7
-    p = sum(volumes[-14:-7]) / 7
-    return round(r / p, 2) if p else None
+    avg = sum(volumes[-21:-1]) / 20
+    return round(volumes[-1] / avg, 2) if avg else None
 
 def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks, contract=None):
     """LANA Score 0-100 綜合評分（含合約端訊號，最高 130 正規化到 100）"""
