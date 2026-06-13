@@ -111,7 +111,7 @@ SHORT 必須同時滿足：
 | MIN_SCORE_TO_ALERT | 76 | TG 推送分數門檻 |
 | MIN_CHANGE_PCT | 3 | 最低漲跌幅篩選 |
 | MIN_VOLUME_USDT | 500000 | 最低成交量 |
-| MAX_COINS_TO_SCAN | 50 | 最多掃描幣數 |
+| MAX_COINS_TO_SCAN | 25 | 最多掃描幣數（原50，因單輪耗時超過15分排程週期而下調）|
 | SCAN_INTERVAL_MIN | 15 | 排程間隔（備用） |
 | PORT | 8080 | Flask port |
 | USE_CRON | true | 停用背景排程 |
@@ -161,6 +161,7 @@ SHORT 必須同時滿足：
 | HOME幣深度分析持續建議做多即使大跌 | 1.AI無K線歷史 2.備用規則無K線判斷 | 加K線趨勢判斷+回調扣分(雙邊) |
 | TG推送76分但量能僅0.8x仍推送 | 量能門檻0.8x太寬鬆 | 提高至1.0x |
 | ICP幣TG=89分但深度分析=43分 | vol_ratio算法不同(7根均量比 vs 現量/20均量) | 統一為現量/20根均量 |
+| 土狗tab永遠"掃描中"+同訊號重複推送 | /api/trigger_scan無重疊保護，單輪掃描(50幣×3種K線)可能超過15分鐘，多個run_scan並行寫入_cache互相干擾且各自推送 | 加_scan_running鎖+K線數量精簡+MAX_COINS 50→25 |
 
 ---
 
