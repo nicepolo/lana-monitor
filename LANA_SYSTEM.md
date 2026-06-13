@@ -1,5 +1,5 @@
 # LANA 系統完整說明文件
-> 最後更新：2026-06-09
+> 最後更新：2026-06-13
 > 維護人：Polo（台中）
 
 ---
@@ -14,10 +14,7 @@
 | LANA Social Scanner（社群） | nicepolo/lana-social-scanner | web-production-3303b.up.railway.app | c5806d | GeckoTerminal 鏈上新幣 |
 
 **GitHub Token**：存在 Railway Variables（不寫在這裡）
-
-**Telegram**：
-- Bot Token：存在 Railway Variables（TELEGRAM_BOT_TOKEN）
-- Chat ID：存在 Railway Variables（TELEGRAM_CHAT_ID）
+**Telegram**：Bot Token / Chat ID 存在 Railway Variables
 
 ---
 
@@ -28,7 +25,7 @@
 |------|------|------|
 | 趨勢 | 25分 | MA7>MA25>MA99=25；MA7>MA25=15；MA7<MA25=0 |
 | RSI | 20分 | 50-70=20；40-50=15；30-40=10；70-80=8；其他=0 |
-| 量能 | 20分 | ≥2.5x=20；≥2.0x=18；≥1.5x=14；≥1.2x=10；≥0.8x=4；<0.8x=0 |
+| 量能 | 20分 | ≥2.5x=20；≥2.0x=18；≥1.5x=14；≥1.2x=10；≥1.0x=6；<1.0x=0 |
 | BB位置 | 15分 | <0.3=15；<0.5=12；≤0.7=8；>0.7=4 |
 | 資金費率 | 20分 | 極中性=20；偏中性=15；負費率=18；極高=2 |
 
@@ -41,7 +38,15 @@
 | BB突破上軌 | 15分 | >1.0=15；>0.8=12；>0.7=6 |
 | 資金費率偏高 | 15分 | >0.001=15；>0.0005=8 |
 
-**重要**：量能讀取用 `vol_ratio_1h`（不是 `vol_ratio`）
+### K線回調扣分（多空評分共用）
+| 條件 | 扣分 |
+|------|------|
+| 距近4根4H K線高點 < -5% 且持續下跌 | -30分 |
+| 距高點 < -3% 且持續下跌 | -15分 |
+
+**重要：量能統一定義 = 現量 / 過去20根均量（vol_ratio_1h）**
+- meme_scanner（indicators.py: volume_ratio）與 lana-monitor 深度分析（app.py: vol_ratio）已統一此算法
+- 舊算法（近7根均量/前7根均量）已棄用
 
 ---
 
@@ -52,7 +57,7 @@ LONG 必須同時滿足：
 1. 分數 >= 76（MIN_SCORE_TO_ALERT）
 2. 趨勢：MA7 > MA25 > MA99（三條全排）
 3. RSI < 72
-4. 量能：vol_ratio_1h >= 0.8x
+4. 量能：vol_ratio_1h >= 1.0x（原0.8x已提高）
 5. 24H漲幅 >= +1.5%
 6. RSI < 75
 
@@ -60,9 +65,9 @@ SHORT 必須同時滿足：
 1. 分數 >= 76
 2. 空頭專屬分 >= 65 + MA7 < MA25 + RSI >= 68
    OR RSI >= 78 + 量能 >= 1.5x + 資金費率 > 0.0005
-3. 量能：vol_ratio_1h >= 0.8x
+3. 量能：vol_ratio_1h >= 1.0x
 4. 24H跌幅 >= -1.5%
-5. RSI > 28（避免超賣追空）
+5. RSI > 28
 ```
 
 ---
@@ -70,12 +75,9 @@ SHORT 必須同時滿足：
 ## 四、掃描排程架構
 
 **架構**：Cron Job 觸發（解決雙 process 重複推送問題）
-
 - `lana-cron` 服務：每 15 分鐘執行一次，POST `/api/trigger_scan`
 - `tender-laughter`：`USE_CRON=true`，背景排程停用，只接受 trigger_scan 觸發
-- 台北時間 03:00-07:00 靜默期：由 Cron Job 控制（可調整 cron schedule）
-
-**重複推送問題**：已用 Cron Job 架構解決，lana-cron 只有一個 instance
+- 注意：`tender-laughter` 本身的 railway.json 也設了 numReplicas:1（無害但非必要）
 
 ---
 
@@ -84,18 +86,21 @@ SHORT 必須同時滿足：
 - meme_scanner.py 本輪去重：同一 symbol 只推一次
 - 跨輪冷卻：同一幣 30 分鐘（2個掃描週期）內不重複推
 - TG header 帶指紋：`#xxxxxxxx` 方便追蹤
+- **注意**：歷史上重複推送問題反覆出現，若再發生需檢查：(1) tender-laughter是否仍顯示"Next in 15 minutes"代表自己也被當cron執行 (2) USE_CRON變數是否重複設定
 
 ---
 
 ## 六、API 資料來源
 
 **全部改用 OKX**（Binance 被 Railway IP 451 地理封鎖）
-
 - K 線：`https://www.okx.com/api/v5/market/candles`
 - Ticker：`https://www.okx.com/api/v5/market/ticker`
 - 資金費率：`https://www.okx.com/api/v5/public/funding-rate`
 - 市場掃描：`https://www.okx.com/api/v5/market/tickers?instType=SWAP`
-- Binance 只做備用（會 451 失敗，Railway IP 被封）
+- Binance 只做備用（會 451 失敗）
+
+**深度分析 K線**：`analyze_coin` 改用 1H K線（150根），原為1D K線（造成RSI天差地遠的bug已修）
+- 7日/30日漲幅改用150根1H K線計算（30日為近似值，約6.25天）
 
 ---
 
@@ -108,67 +113,58 @@ SHORT 必須同時滿足：
 | MIN_VOLUME_USDT | 500000 | 最低成交量 |
 | MAX_COINS_TO_SCAN | 50 | 最多掃描幣數 |
 | SCAN_INTERVAL_MIN | 15 | 排程間隔（備用） |
-| PORT | 8080 | Flask port（private network 固定用） |
-| USE_CRON | true | 停用背景排程，改用 Cron Job 觸發 |
+| PORT | 8080 | Flask port |
+| USE_CRON | true | 停用背景排程 |
 | ANTHROPIC_API_KEY | ****** | Claude API |
-| GEMINI_API_KEY | ****** | Gemini API（備用） |
-| TELEGRAM_BOT_TOKEN | ****** | TG Bot |
-| TELEGRAM_CHAT_ID | ****** | TG Chat |
+| TELEGRAM_BOT_TOKEN/CHAT_ID | ****** | TG |
 
 ---
 
-## 八、網頁架構（lana-monitor/app.py）
+## 八、深度分析 AI 邏輯（重要）
 
-**主要路由：**
-- `/` → index.html（主頁面）
-- `/api/meme_signals` → Proxy 到 tender-laughter:8080（土狗 tab）
-- `/api/ai_analyze` → 深度分析 AI（Claude Haiku，OKX K線）
-- `/health` → 健康檢查
+**提示詞包含 K 線趨勢資料**（防止下跌中還建議做多）：
+- 計算近4根4H K線的高點、現價距高點%、K線方向（上升/下跌/震盪）
+- 規則：距高點<-5%且下跌中 → 不應建議LONG，優先SHORT或WATCH
+- 此規則同時應用於 AI 版本與備用規則式版本（兩者邏輯已統一）
 
-**Private Network**：
-- lana-monitor → tender-laughter 透過 `http://tender-laughter:8080`
-- 兩個服務都在 Railway project be4b45
-
----
-
-## 九、AI 分析費用策略
-
-- **掃描推送（自動）**：純規則式，零 API 費用
-- **深度分析（手動點）**：Claude Haiku `claude-haiku-4-5-20251001`，才消耗 token
-- Gemini 已停用（JSON 截斷問題太多）
+**深度分析與TG推送分歧的歷史教訓**：
+- 第一次分歧（HOME幣）：根因是深度分析用1D K線、TG推送用1H K線，RSI差很多 → 已修正為都用1H
+- 第二次分歧（ICP幣）：根因是vol_ratio算法不同（7根均量比 vs 現量/20根均量）→ 已統一算法
+- 若未來再出現分數差異很大，優先檢查：兩邊抓的K線週期是否一致、量能算法是否一致
 
 ---
 
-## 十、網頁功能 Tab 說明
+## 九、網頁功能 Tab 說明
 
 | Tab | 功能 | 資料來源 |
 |-----|------|---------|
 | 市場掃描 | OKX/Bybit 期貨訊號 | lana-monitor 自帶 |
-| 深度分析 | 手動輸入幣名分析 | OKX K線 + Claude AI |
+| 深度分析 | 手動輸入幣名分析 | OKX 1H K線 + Claude AI |
 | 觀察名單 | 自訂追蹤清單 | 本地儲存 |
 | 土狗 | Meme幣掃描結果 | tender-laughter /api/meme_signals |
-| 社群 | 鏈上新幣情緒 | lana-social-scanner（web-production-3303b） |
+| 社群 | 鏈上新幣情緒 | lana-social-scanner |
 | 日誌 | 操作記錄 | 本地 |
 | 回測 | 歷史回測 | OKX K線 |
 
 ---
 
-## 十一、已知問題與歷史 Bug
+## 十、已知問題與歷史 Bug（時間序）
 
 | 問題 | 根本原因 | 修法 |
 |------|---------|------|
 | 量能排除一直失效 | ind.get("vol_ratio") 應為 vol_ratio_1h | 改讀 vol_ratio_1h |
-| TG 每個幣推兩次 | Railway 部署新舊 process 重疊各推一次 | 改用 Cron Job 架構 |
+| TG 每個幣推兩次 | Railway 部署新舊 process 重疊 | 改用 Cron Job 架構 |
 | 深度分析 451 錯誤 | Binance 地理封鎖 Railway IP | 全改 OKX API |
-| Gemini JSON 截斷 | maxOutputTokens 太低 + AI 費用高 | 改純規則式 |
-| 土狗頁面無法連線 | 前端寫死舊 domain | MEME_API 改同源 /api/meme_signals |
-| 分數不統一 | 兩套邏輯 | 統一 MA+RSI+量能+BB+FR |
+| 土狗頁面無法連線 | 前端寫死舊 domain | 改同源 /api/meme_signals |
 | 社群幣顯示 0 分 | 前端讀 risk.score，AI 輸出 risk_score | 加對齊 key |
 | 做空從不出現 | 篩選邏輯偏多頭，無空頭專屬評分 | 加 _calc_short_score |
+| HOME幣深度分析持續建議做多即使大跌 | 1.AI無K線歷史 2.備用規則無K線判斷 | 加K線趨勢判斷+回調扣分(雙邊) |
+| TG推送76分但量能僅0.8x仍推送 | 量能門檻0.8x太寬鬆 | 提高至1.0x |
+| ICP幣TG=89分但深度分析=43分 | vol_ratio算法不同(7根均量比 vs 現量/20均量) | 統一為現量/20根均量 |
 
 ---
 
-## 十二、新對話開始時給 Claude 的指令
+## 十一、新對話開始時給 Claude 的指令
 
 ```
 請讀取 GitHub nicepolo/lana-monitor repo 的 LANA_SYSTEM.md，
