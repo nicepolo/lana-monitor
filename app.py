@@ -689,7 +689,7 @@ def _quick_score_one(coin):
         return coin, None, None
 
 
-@app.route("/api/scan")
+@app.route("/api/scan", methods=["GET", "POST"])
 def api_scan():
     try:
         data = fetch_market_scan()
