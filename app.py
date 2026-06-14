@@ -1599,11 +1599,34 @@ def api_ai_analyze():
 
 @app.route("/api/meme_signals")
 def api_meme_signals():
-    """Proxy 到 tender-laughter 內部服務取得 meme scanner 資料"""
+    """直接用 lana-monitor 掃描 MEME 幣清單"""
+    MEME_COINS = ["LUNA", "LUNC", "DOGE", "SHIB", "PEPE", "FLOKI",
+                  "BONK", "WIF", "NEIRO", "MEME", "POPCAT", "MOG"]
     try:
-        meme_url = os.getenv("MEME_SCANNER_URL", "http://tender-laughter:8080")
-        r = requests.get(f"{meme_url}/api/meme_signals", timeout=12)
-        resp = jsonify(r.json())
+        signals = []
+        for coin in MEME_COINS:
+            try:
+                c, score, grade, rsi_val, vr_val, ma_bull, bb_pos = _quick_score_one(coin)
+                if score is None:
+                    continue
+                symbol = coin + "USDT"
+                ticker = fetch_ticker(symbol)
+                change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
+                price  = float(ticker.get("lastPrice", 0)) if ticker else 0
+                direction = "LONG" if score >= 65 and ma_bull else "WATCH"
+                signals.append({
+                    "coin": coin, "symbol": symbol,
+                    "price": price, "change": round(change, 2),
+                    "lana_score": score, "lana_grade": grade,
+                    "direction": direction,
+                    "rsi": rsi_val, "vol_ratio": vr_val,
+                    "ma_bull": ma_bull,
+                })
+            except Exception:
+                continue
+        signals.sort(key=lambda x: x["lana_score"], reverse=True)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        resp = jsonify({"signals": signals, "last_scan": now_str, "scan_count": 1})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         return resp
     except Exception as e:
