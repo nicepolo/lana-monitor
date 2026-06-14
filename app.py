@@ -682,6 +682,25 @@ def _quick_score_one(coin):
         if vr and vr < 0.8: risks.append("量能萎縮")
         ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
         score = ls["total"]
+
+        # 4H 下跌懲罰（與深度分析一致）
+        kline_penalty = 0
+        try:
+            klines_4h = fetch_klines(symbol, "4h", 6)
+            if klines_4h and len(klines_4h) >= 4:
+                recent_high = max(k["h"] for k in klines_4h[-4:])
+                pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
+                closes_4h = [k["c"] for k in klines_4h[-4:]]
+                rising = sum(1 for i in range(1, len(closes_4h)) if closes_4h[i] > closes_4h[i-1])
+                price_trend_4h = "down" if rising <= 1 else "up"
+                if pct_from_high < -5 and price_trend_4h == "down":
+                    kline_penalty = 30
+                elif pct_from_high < -5:
+                    kline_penalty = 15
+        except Exception:
+            pass
+
+        score = max(0, score - kline_penalty)
         grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
                  "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
         ma_bull = bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120)
