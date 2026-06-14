@@ -1599,30 +1599,21 @@ def api_ai_analyze():
 
 @app.route("/api/meme_signals")
 def api_meme_signals():
-    """直接用 lana-monitor 掃描 MEME 幣清單"""
-    MEME_COINS = [
-        # MEME 幣
+    """直接用 lana-monitor 掃描所有幣種"""
+    ALL_COINS = [
         "DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "NEIRO",
         "MEME", "POPCAT", "MOG", "LUNA", "LUNC",
-        # 主流幣
         "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
         "LINK", "UNI", "LTC", "BCH",
-        # Layer2 / 生態
-        "ARB", "OP", "MATIC", "IMX", "STRK", "ZKSYNC",
-        "APT", "SUI", "SEI", "INJ",
-        # AI 概念
+        "ARB", "OP", "MATIC", "IMX", "APT", "SUI", "SEI", "INJ",
         "FET", "AGIX", "RENDER", "WLD", "TAO", "NEAR", "GRT",
-        # DeFi
-        "AAVE", "CRV", "MKR", "SNX", "COMP", "LDO", "JTO",
-        # 其他熱門
-        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR",
-        "JUP", "PYTH", "W", "EIGEN", "MEW",
+        "AAVE", "CRV", "MKR", "SNX", "LDO", "JTO",
+        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR", "JUP", "PYTH",
     ]
     try:
-        signals = []
-        for coin in MEME_COINS:
-            try:
-                c, score, grade, rsi_val, vr_val, ma_bull, bb_pos = _quick_score_one(coin)
+        results = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_quick_score_one, ALL_COINS):
                 if score is None:
                     continue
                 symbol = coin + "USDT"
@@ -1630,7 +1621,7 @@ def api_meme_signals():
                 change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
                 price  = float(ticker.get("lastPrice", 0)) if ticker else 0
                 direction = "LONG" if score >= 65 and ma_bull else "WATCH"
-                signals.append({
+                results.append({
                     "coin": coin, "symbol": symbol,
                     "price": price, "change": round(change, 2),
                     "lana_score": score, "lana_grade": grade,
@@ -1638,15 +1629,21 @@ def api_meme_signals():
                     "rsi": rsi_val, "vol_ratio": vr_val,
                     "ma_bull": ma_bull,
                 })
-            except Exception:
-                continue
-        signals.sort(key=lambda x: x["lana_score"], reverse=True)
+        results.sort(key=lambda x: x["lana_score"], reverse=True)
+        signals    = [r for r in results if r["direction"] == "LONG"]
+        all_results = results
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        resp = jsonify({"signals": signals, "last_scan": now_str, "scan_count": 1})
+        resp = jsonify({
+            "signals": signals,
+            "all_results": all_results,
+            "last_update": now_str,
+            "last_scan": now_str,
+            "scan_count": 1
+        })
         resp.headers["Access-Control-Allow-Origin"] = "*"
         return resp
     except Exception as e:
-        return jsonify({"error": str(e), "signals": [], "last_scan": None}), 200
+        return jsonify({"error": str(e), "signals": [], "all_results": [], "last_scan": None}), 200
 
 
 @app.route("/health")
