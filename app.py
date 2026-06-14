@@ -684,9 +684,10 @@ def _quick_score_one(coin):
         score = ls["total"]
         grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
                  "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
-        return coin, score, grade
+        ma_bull = bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120)
+        return coin, score, grade, round(r14, 1) if r14 else None, round(vr, 2) if vr else None, ma_bull, bb_pos
     except Exception:
-        return coin, None, None
+        return coin, None, None, None, None, False, ""
 
 
 @app.route("/api/scan", methods=["GET", "POST"])
@@ -711,9 +712,13 @@ def api_scan():
         all_coins = [d['coin'] for d in data]
         score_map = {}
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for coin, score, grade in ex.map(_quick_score_one, all_coins):
+            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_quick_score_one, all_coins):
                 if score is not None:
-                    score_map[coin] = {"lana_score": score, "lana_grade": grade}
+                    score_map[coin] = {
+                        "lana_score": score, "lana_grade": grade,
+                        "rsi": rsi_val, "vol_ratio": vr_val,
+                        "ma_bull": ma_bull, "bb_position": bb_pos
+                    }
         for d in data:
             if d['coin'] in score_map:
                 d.update(score_map[d['coin']])
