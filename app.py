@@ -770,24 +770,6 @@ def _quick_score_one(coin):
         ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
         score = ls["total"]
 
-        # 4H 下跌懲罰（與深度分析一致）
-        kline_penalty = 0
-        try:
-            klines_4h = fetch_klines(symbol, "4h", 6)
-            if klines_4h and len(klines_4h) >= 4:
-                recent_high = max(k["h"] for k in klines_4h[-4:])
-                pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
-                closes_4h = [k["c"] for k in klines_4h[-4:]]
-                rising = sum(1 for i in range(1, len(closes_4h)) if closes_4h[i] > closes_4h[i-1])
-                price_trend_4h = "down" if rising <= 1 else "up"
-                if pct_from_high < -5 and price_trend_4h == "down":
-                    kline_penalty = 20
-                elif pct_from_high < -5:
-                    kline_penalty = 10
-        except Exception:
-            pass
-
-        score = max(0, score - kline_penalty)
         grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
                  "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
         ma_bull = bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120)
@@ -1615,10 +1597,10 @@ def api_ai_analyze():
                     rising = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
                     price_trend = "上升中" if rising >= 3 else ("下跌中" if rising <= 1 else "震盪")
                     if pct_from_high < -5 and price_trend == "下跌中":
-                        kline_penalty = 20
+                        kline_penalty = 0
                         kline_note = f"距高點{pct_from_high:.1f}%且K線下跌中，謹慎操作"
                     elif pct_from_high < -5:
-                        kline_penalty = 10
+                        kline_penalty = 0
                         kline_note = f"距高點{pct_from_high:.1f}%，留意壓力"
             except:
                 pass
@@ -1626,7 +1608,7 @@ def api_ai_analyze():
             score = max(0, score - kline_penalty)
             # SHORT 條件：MA空頭排列 且 RSI偏高 或 距高點大幅回落
             ma_bear = not ma_bull and ma7 and ma25 and ma7 < ma25
-            if score >= 55 and ma_bull and rsi_1h < 75 and kline_penalty <= 20:
+            if score >= 65 and ma_bull and rsi_1h < 75:
                 direction = "LONG"
             elif ma_bear and rsi_1h > 55 and kline_penalty >= 15:
                 direction = "SHORT"
