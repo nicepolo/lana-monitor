@@ -654,6 +654,30 @@ def api_watchlist_remove():
     save_watchlist(coins)
     return jsonify({"ok": True, "coins": coins})
 
+def _fast_score_one(coin):
+    """超快速評分，不拉 4H K 線，專供土狗 tab 使用"""
+    try:
+        symbol  = f"{coin}USDT"
+        klines  = fetch_klines(symbol)
+        if not klines or len(klines) < 30:
+            return coin, None, None, None, None, False, ""
+        price   = klines[-1]["c"]
+        ma7     = sum(k["c"] for k in klines[-7:]) / 7
+        ma30    = sum(k["c"] for k in klines[-30:]) / 30
+        ma120   = sum(k["c"] for k in klines[-120:]) / 120 if len(klines) >= 120 else None
+        r14     = calc_rsi(klines, 14)
+        vr      = calc_vol_ratio(klines)
+        bb_pos  = calc_bb_position(klines, 20, 2.0)
+        risks   = []
+        ls      = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+        score   = ls["total"]
+        grade   = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
+                   "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
+        ma_bull = bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120)
+        return coin, score, grade, round(r14, 1) if r14 else None, round(vr, 2) if vr else None, ma_bull, bb_pos
+    except Exception:
+        return coin, None, None, None, None, False, ""
+
 def _quick_score_one(coin):
     """用 klines 快速算 LANA 分數（不含 futures），供掃描列表用"""
     try:
@@ -1613,7 +1637,7 @@ def api_meme_signals():
     try:
         results = []
         with ThreadPoolExecutor(max_workers=10) as ex:
-            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_quick_score_one, ALL_COINS):
+            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_fast_score_one, ALL_COINS):
                 if score is None:
                     continue
                 symbol = coin + "USDT"
