@@ -1600,8 +1600,24 @@ def api_ai_analyze():
 @app.route("/api/meme_signals")
 def api_meme_signals():
     """直接用 lana-monitor 掃描 MEME 幣清單"""
-    MEME_COINS = ["LUNA", "LUNC", "DOGE", "SHIB", "PEPE", "FLOKI",
-                  "BONK", "WIF", "NEIRO", "MEME", "POPCAT", "MOG"]
+    MEME_COINS = [
+        # MEME 幣
+        "DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "NEIRO",
+        "MEME", "POPCAT", "MOG", "LUNA", "LUNC",
+        # 主流幣
+        "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
+        "LINK", "UNI", "LTC", "BCH",
+        # Layer2 / 生態
+        "ARB", "OP", "MATIC", "IMX", "STRK", "ZKSYNC",
+        "APT", "SUI", "SEI", "INJ",
+        # AI 概念
+        "FET", "AGIX", "RENDER", "WLD", "TAO", "NEAR", "GRT",
+        # DeFi
+        "AAVE", "CRV", "MKR", "SNX", "COMP", "LDO", "JTO",
+        # 其他熱門
+        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR",
+        "JUP", "PYTH", "W", "EIGEN", "MEW",
+    ]
     try:
         signals = []
         for coin in MEME_COINS:
