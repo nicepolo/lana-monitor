@@ -1645,13 +1645,33 @@ def api_meme_signals():
                 change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
                 price  = float(ticker.get("lastPrice", 0)) if ticker else 0
                 direction = "LONG" if score >= 65 and ma_bull else "WATCH"
+                # 計算入場/止損/目標
+                entry_lo = round(price * 0.995, 6)
+                entry_hi = round(price * 1.002, 6)
+                sl       = round(price * 0.97, 6)
+                t1       = round(price * 1.04, 6)
+                t2       = round(price * 1.08, 6)
+                rsi_note = ("RSI超賣有反彈機會" if rsi_val and rsi_val < 35 else
+                            "RSI偏弱有反彈機會" if rsi_val and rsi_val < 50 else
+                            "RSI中性" if rsi_val and rsi_val < 60 else "RSI偏強")
                 results.append({
-                    "coin": coin, "symbol": symbol,
+                    "coin": coin, "symbol": coin,
+                    "exchange": "okx",
                     "price": price, "change": round(change, 2),
-                    "lana_score": score, "lana_grade": grade,
+                    "change_24h": round(change, 2),
+                    "score": score, "lana_score": score, "lana_grade": grade,
                     "direction": direction,
-                    "rsi": rsi_val, "vol_ratio": vr_val,
+                    "rsi": rsi_val, "rsi_1h": rsi_val,
+                    "vol_ratio": vr_val,
                     "ma_bull": ma_bull,
+                    "summary": f"MA{'多頭' if ma_bull else '空頭'}排列，{rsi_note}",
+                    "reason": f"LANA評分 {score}/100，量比 {vr_val or 'N/A'}x",
+                    "entry_zone": f"{entry_lo}-{entry_hi}",
+                    "stop_loss": str(sl),
+                    "target_1": str(t1),
+                    "target_2": str(t2),
+                    "timeframe": "4-8小時",
+                    "risk_note": "嚴控倉位，設好止損，單筆不超 3-5%",
                 })
         results.sort(key=lambda x: x["lana_score"], reverse=True)
         signals    = [r for r in results if r["direction"] == "LONG"]
