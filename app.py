@@ -1634,40 +1634,61 @@ def api_meme_signals():
         "AAVE", "CRV", "MKR", "SNX", "LDO", "JTO",
         "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR", "JUP", "PYTH",
     ]
-    try:
-        results = []
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_fast_score_one, ALL_COINS):
-                if score is None:
-                    continue
-                symbol = coin + "USDT"
-                ticker = fetch_ticker(symbol)
-                change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
-                price  = float(ticker.get("lastPrice", 0)) if ticker else 0
-                direction = "LONG" if score >= 65 and ma_bull else "WATCH"
-                results.append({
-                    "coin": coin, "symbol": symbol,
-                    "price": price, "change": round(change, 2),
-                    "lana_score": score, "lana_grade": grade,
-                    "direction": direction,
-                    "rsi": rsi_val, "vol_ratio": vr_val,
-                    "ma_bull": ma_bull,
-                })
-        results.sort(key=lambda x: x["lana_score"], reverse=True)
-        signals    = [r for r in results if r["direction"] == "LONG"]
-        all_results = results
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        resp = jsonify({
-            "signals": signals,
-            "all_results": all_results,
-            "last_update": now_str,
-            "last_scan": now_str,
-            "scan_count": 1
-        })
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        return resp
-    except Exception as e:
-        return jsonify({"error": str(e), "signals": [], "all_results": [], "last_scan": None}), 200
+    results = []
+    for coin in ALL_COINS:
+        try:
+            coin_r, score, grade, rsi_val, vr_val, ma_bull, bb_pos = _fast_score_one(coin)
+            if score is None:
+                continue
+            symbol = coin + "USDT"
+            ticker = fetch_ticker(symbol)
+            change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
+            price  = float(ticker.get("lastPrice", 0)) if ticker else 0
+            direction = "LONG" if score >= 55 and ma_bull else "WATCH"
+            entry_lo = round(price * 0.995, 6) if price else 0
+            entry_hi = round(price * 1.002, 6) if price else 0
+            sl = round(price * 0.97, 6) if price else 0
+            t1 = round(price * 1.04, 6) if price else 0
+            t2 = round(price * 1.08, 6) if price else 0
+            rsi_note = ("RSI超賣" if rsi_val and rsi_val < 35 else
+                        "RSI偏弱" if rsi_val and rsi_val < 50 else
+                        "RSI中性" if rsi_val and rsi_val < 60 else "RSI偏強")
+            ma_note = "MA多頭" if ma_bull else "MA空頭"
+            results.append({
+                "coin": coin, "symbol": coin,
+                "exchange": "okx",
+                "price": price, "change": round(change, 2),
+                "change_24h": round(change, 2),
+                "score": score, "lana_score": score, "lana_grade": grade,
+                "direction": direction,
+                "rsi": rsi_val, "rsi_1h": rsi_val,
+                "vol_ratio": vr_val,
+                "ma_bull": ma_bull,
+                "summary": f"{ma_note}，{rsi_note}",
+                "reason": f"LANA評分 {score}/100，量比 {vr_val or 'N/A'}x",
+                "entry_zone": f"{entry_lo}-{entry_hi}",
+                "stop_loss": str(sl),
+                "target_1": str(t1),
+                "target_2": str(t2),
+                "timeframe": "4-8小時",
+                "risk_note": "嚴控倉位，設好止損，單筆不超 3-5%",
+            })
+        except Exception as e:
+            log.warning(f"meme_signals {coin}: {e}")
+            continue
+    results.sort(key=lambda x: x["lana_score"], reverse=True)
+    signals = [r for r in results if r["direction"] == "LONG"]
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    resp = jsonify({
+        "signals": signals,
+        "all_results": results,
+        "last_update": now_str,
+        "last_scan": now_str,
+        "scan_count": 1,
+        "debug_count": len(results),
+    })
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
 
 
 @app.route("/health")
