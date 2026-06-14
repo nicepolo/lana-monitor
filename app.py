@@ -13,6 +13,10 @@ from datetime import datetime, timezone, timedelta
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# ── Meme Signals Cache ──
+_meme_cache = {"results": [], "ts": ""}
+_meme_cache_time = 0
+
 app = Flask(__name__)
 
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
@@ -677,6 +681,65 @@ def _fast_score_one(coin):
         return coin, score, grade, round(r14, 1) if r14 else None, round(vr, 2) if vr else None, ma_bull, bb_pos
     except Exception:
         return coin, None, None, None, None, False, ""
+
+
+
+def _refresh_meme_cache():
+    """背景掃描所有幣，結果存入 cache"""
+    global _meme_cache, _meme_cache_time
+    ALL_COINS = [
+        "DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "NEIRO",
+        "MEME", "POPCAT", "MOG", "LUNA", "LUNC",
+        "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
+        "LINK", "UNI", "LTC", "BCH",
+        "ARB", "OP", "MATIC", "IMX", "APT", "SUI", "SEI", "INJ",
+        "FET", "AGIX", "RENDER", "WLD", "TAO", "NEAR", "GRT",
+        "AAVE", "CRV", "MKR", "SNX", "LDO", "JTO",
+        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR", "JUP", "PYTH",
+    ]
+    results = []
+    for coin in ALL_COINS:
+        try:
+            coin_r, score, grade, rsi_val, vr_val, ma_bull, bb_pos = _fast_score_one(coin)
+            if score is None:
+                continue
+            symbol = coin + "USDT"
+            ticker = fetch_ticker(symbol)
+            change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
+            price  = float(ticker.get("lastPrice", 0)) if ticker else 0
+            direction = "LONG" if score >= 55 and ma_bull else "WATCH"
+            entry_lo = round(price * 0.995, 6) if price else 0
+            entry_hi = round(price * 1.002, 6) if price else 0
+            sl = round(price * 0.97, 6) if price else 0
+            t1 = round(price * 1.04, 6) if price else 0
+            t2 = round(price * 1.08, 6) if price else 0
+            rsi_note = ("RSI超賣" if rsi_val and rsi_val < 35 else
+                        "RSI偏弱" if rsi_val and rsi_val < 50 else
+                        "RSI中性" if rsi_val and rsi_val < 60 else "RSI偏強")
+            ma_note = "MA多頭" if ma_bull else "MA空頭"
+            results.append({
+                "coin": coin, "symbol": coin, "exchange": "okx",
+                "price": price, "change": round(change, 2),
+                "change_24h": round(change, 2),
+                "score": score, "lana_score": score, "lana_grade": grade,
+                "direction": direction,
+                "rsi": rsi_val, "rsi_1h": rsi_val, "vol_ratio": vr_val,
+                "ma_bull": ma_bull,
+                "summary": f"{ma_note}，{rsi_note}",
+                "reason": f"LANA評分 {score}/100，量比 {vr_val or 'N/A'}x",
+                "entry_zone": f"{entry_lo}-{entry_hi}",
+                "stop_loss": str(sl), "target_1": str(t1), "target_2": str(t2),
+                "timeframe": "4-8小時",
+                "risk_note": "嚴控倉位，設好止損，單筆不超 3-5%",
+            })
+        except Exception as e:
+            log.warning(f"meme_cache {coin}: {e}")
+            continue
+    results.sort(key=lambda x: x["lana_score"], reverse=True)
+    _meme_cache["results"] = results
+    _meme_cache["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _meme_cache_time = time.time()
+    log.info(f"meme cache 更新，共 {len(results)} 顆")
 
 def _quick_score_one(coin):
     """用 klines 快速算 LANA 分數（不含 futures），供掃描列表用"""
@@ -1623,67 +1686,27 @@ def api_ai_analyze():
 
 @app.route("/api/meme_signals")
 def api_meme_signals():
-    """直接用 lana-monitor 掃描所有幣種"""
-    ALL_COINS = [
-        "DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "NEIRO",
-        "MEME", "POPCAT", "MOG", "LUNA", "LUNC",
-        "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
-        "LINK", "UNI", "LTC", "BCH",
-        "ARB", "OP", "MATIC", "IMX", "APT", "SUI", "SEI", "INJ",
-        "FET", "AGIX", "RENDER", "WLD", "TAO", "NEAR", "GRT",
-        "AAVE", "CRV", "MKR", "SNX", "LDO", "JTO",
-        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR", "JUP", "PYTH",
-    ]
-    results = []
-    for coin in ALL_COINS:
+    """回傳 cache，背景更新（避免 timeout）"""
+    global _meme_cache_time
+    CACHE_TTL = 900  # 15分鐘
+    # 如果 cache 過期或是空的，同步更新一次
+    if not _meme_cache["results"] or time.time() - _meme_cache_time > CACHE_TTL:
         try:
-            coin_r, score, grade, rsi_val, vr_val, ma_bull, bb_pos = _fast_score_one(coin)
-            if score is None:
-                continue
-            symbol = coin + "USDT"
-            ticker = fetch_ticker(symbol)
-            change = float(ticker.get("priceChangePercent", 0)) if ticker else 0
-            price  = float(ticker.get("lastPrice", 0)) if ticker else 0
-            direction = "LONG" if score >= 55 and ma_bull else "WATCH"
-            entry_lo = round(price * 0.995, 6) if price else 0
-            entry_hi = round(price * 1.002, 6) if price else 0
-            sl = round(price * 0.97, 6) if price else 0
-            t1 = round(price * 1.04, 6) if price else 0
-            t2 = round(price * 1.08, 6) if price else 0
-            rsi_note = ("RSI超賣" if rsi_val and rsi_val < 35 else
-                        "RSI偏弱" if rsi_val and rsi_val < 50 else
-                        "RSI中性" if rsi_val and rsi_val < 60 else "RSI偏強")
-            ma_note = "MA多頭" if ma_bull else "MA空頭"
-            results.append({
-                "coin": coin, "symbol": coin,
-                "exchange": "okx",
-                "price": price, "change": round(change, 2),
-                "change_24h": round(change, 2),
-                "score": score, "lana_score": score, "lana_grade": grade,
-                "direction": direction,
-                "rsi": rsi_val, "rsi_1h": rsi_val,
-                "vol_ratio": vr_val,
-                "ma_bull": ma_bull,
-                "summary": f"{ma_note}，{rsi_note}",
-                "reason": f"LANA評分 {score}/100，量比 {vr_val or 'N/A'}x",
-                "entry_zone": f"{entry_lo}-{entry_hi}",
-                "stop_loss": str(sl),
-                "target_1": str(t1),
-                "target_2": str(t2),
-                "timeframe": "4-8小時",
-                "risk_note": "嚴控倉位，設好止損，單筆不超 3-5%",
-            })
+            t = threading.Thread(target=_refresh_meme_cache)
+            t.daemon = True
+            t.start()
+            # 等最多 25 秒讓第一次掃描完成
+            if not _meme_cache["results"]:
+                t.join(timeout=25)
         except Exception as e:
-            log.warning(f"meme_signals {coin}: {e}")
-            continue
-    results.sort(key=lambda x: x["lana_score"], reverse=True)
+            log.warning(f"meme refresh error: {e}")
+    results = _meme_cache["results"]
     signals = [r for r in results if r["direction"] == "LONG"]
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     resp = jsonify({
         "signals": signals,
         "all_results": results,
-        "last_update": now_str,
-        "last_scan": now_str,
+        "last_update": _meme_cache["ts"],
+        "last_scan": _meme_cache["ts"],
         "scan_count": 1,
         "debug_count": len(results),
     })
