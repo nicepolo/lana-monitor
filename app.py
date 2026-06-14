@@ -1513,7 +1513,14 @@ def api_ai_analyze():
                 pass
 
             score = max(0, score - kline_penalty)
-            direction = "LONG" if score >= 70 and ma_bull and rsi_1h < 72 and not kline_penalty else "WATCH"
+            # SHORT 條件：MA空頭排列 且 RSI偏高 或 距高點大幅回落
+            ma_bear = not ma_bull and ma7 and ma25 and ma7 < ma25
+            if score >= 60 and ma_bull and rsi_1h < 75 and not kline_penalty:
+                direction = "LONG"
+            elif ma_bear and rsi_1h > 55 and kline_penalty >= 15:
+                direction = "SHORT"
+            else:
+                direction = "WATCH"
 
             # 說明文字
             trend_txt = "MA多頭排列" if ma_bull else "MA偏空整理"
