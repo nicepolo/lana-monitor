@@ -701,7 +701,11 @@ def _fast_score_one(coin):
         vr      = calc_vol_ratio(klines)
         bb_pos  = calc_bb_position(klines, 20, 2.0)
         risks   = []
-        ls      = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks)
+        price_now  = klines[-1]["c"]
+        high20     = max(k["h"] for k in klines[-20:]) if len(klines) >= 20 else None
+        change_24h = ((price_now - klines[-25]["c"]) / klines[-25]["c"] * 100) if len(klines) >= 25 else None
+        ls      = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks,
+                                  price=price_now, high20=high20, change_24h=change_24h)
         score   = ls["total"]
         grade   = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
                    "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
