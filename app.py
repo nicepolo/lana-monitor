@@ -363,7 +363,9 @@ def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks, contract=None,
             elif ls > 3.0:          s_contract -= 10
 
     raw = base + s_contract
-    total = max(0, min(100, round(raw / 130 * 100)))
+    # 正規化：有合約資料時分母 130，無合約時分母 100（避免無謂打折）
+    denom = 130 if s_contract != 0 else 100
+    total = max(0, min(100, round(raw / denom * 100)))
     return {
         "total": total, "raw": raw,
         "trend": s_trend, "rsi": s_rsi, "vol": s_vol,
