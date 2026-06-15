@@ -698,14 +698,14 @@ def _refresh_meme_cache():
     """背景掃描所有幣，結果存入 cache"""
     global _meme_cache, _meme_cache_time
     ALL_COINS = [
-        "DOGE", "SHIB", "PEPE", "FLOKI", "BONK", "WIF", "NEIRO",
-        "MEME", "POPCAT", "MOG", "LUNA", "LUNC",
-        "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT",
-        "LINK", "UNI", "LTC", "BCH",
-        "ARB", "OP", "MATIC", "IMX", "APT", "SUI", "SEI", "INJ",
-        "FET", "AGIX", "RENDER", "WLD", "TAO", "NEAR", "GRT",
-        "AAVE", "CRV", "MKR", "SNX", "LDO", "JTO",
-        "TRX", "TON", "ATOM", "FIL", "ETC", "HBAR", "JUP", "PYTH",
+        # 主流
+        "BTC", "ETH", "SOL", "BNB", "XRP",
+        # MEME
+        "DOGE", "SHIB", "PEPE", "BONK", "WIF",
+        # AI/生態
+        "WLD", "TAO", "NEAR", "FET", "RENDER",
+        # Layer2
+        "ARB", "OP", "APT", "SUI", "INJ",
     ]
     results = []
     for coin in ALL_COINS:
