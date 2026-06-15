@@ -2409,7 +2409,34 @@ function renderAIResult(r) {
   var dirText  = r.direction === 'LONG' ? '▲ 做多' : r.direction === 'SHORT' ? '▼ 做空' : '— 觀望';
   var scoreColor = r.score >= 70 ? '#0ecb81' : r.score >= 50 ? '#f0b90b' : '#848e9c';
 
+  // ── 綜合判定：AI方向 + LANA Score 雙重確認 ──
+  var lanaScore = (_lastAnalysis && _lastAnalysis.lana_score) || 0;
+  var aiLong = r.direction === 'LONG';
+  var verdict, vColor, vBg, vDesc;
+  if (aiLong && lanaScore >= 55) {
+    verdict = '🟢 可考慮進場';
+    vColor = '#0ecb81'; vBg = '#0a2a1a';
+    vDesc = 'AI 與技術指標雙重確認，訊號較可靠';
+  } else if (aiLong && lanaScore < 55) {
+    verdict = '🟡 AI單方面看好，需謹慎';
+    vColor = '#f0b90b'; vBg = '#2a2410';
+    vDesc = 'AI 看多但技術指標分數偏低（' + lanaScore + '分），可能量能不足，建議小倉或再觀察';
+  } else if (!aiLong && lanaScore >= 55) {
+    verdict = '⚪ 技術面不錯，等AI確認';
+    vColor = '#848e9c'; vBg = '#1a1f2e';
+    vDesc = '技術指標分數高但 AI 建議' + dirText + '，先觀望等更明確訊號';
+  } else {
+    verdict = '🔴 不建議進場';
+    vColor = '#f6465d'; vBg = '#2a0a0a';
+    vDesc = 'AI 與技術指標都不支持做多，避免進場';
+  }
+
   el.innerHTML =
+    '<div style="background:' + vBg + ';border:1px solid ' + vColor + '44;border-radius:8px;padding:10px 12px;margin-bottom:12px">' +
+      '<div style="font-size:15px;font-weight:700;color:' + vColor + ';margin-bottom:4px">' + verdict + '</div>' +
+      '<div style="font-size:11px;color:#aaa;line-height:1.5">' + vDesc + '</div>' +
+      '<div style="font-size:10px;color:#666;margin-top:6px">AI方向：' + dirText + ' ' + (r.score||0) + '分　|　LANA技術分：' + lanaScore + '分</div>' +
+    '</div>' +
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
       '<span style="font-size:20px;font-weight:700;color:' + dirColor + '">' + dirText + '</span>' +
       '<span style="font-size:13px;color:' + scoreColor + ';font-weight:700">' + (r.score||0) + '/100 &nbsp;' + (r.confidence||'') + '信心</span>' +
