@@ -306,94 +306,72 @@ def vol_ratio(volumes):
 
 def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks, contract=None,
                     price=None, high20=None, change_24h=None):
-    """LANA Score 0-100 綜合評分 v2（加入突破偵測）"""
-    # ── 趨勢 20分（放寬，MA 剛排列也給分）──
-    if ma7 and ma30 and ma120 and ma7 > ma30 > ma120:
-        s_trend = 20   # 完整多頭排列
-    elif ma7 and ma30 and ma7 > ma30:
-        s_trend = 14   # 短期多頭
-    elif ma7 and ma30 and ma7 > ma30 * 0.98:
-        s_trend = 8    # 接近多頭
-    else:
-        s_trend = 2
-
-    # ── 突破訊號 20分（新增）──
-    # 價格突破近 20 根高點 + 量能放大 = 最強做多訊號
-    s_break = 0
-    if price and high20:
-        if price > high20 * 1.01 and vr and vr >= 1.5:
-            s_break = 20   # 放量突破新高
-        elif price > high20 * 1.005 and vr and vr >= 1.2:
-            s_break = 14   # 突破新高
-        elif price > high20 * 0.98:
-            s_break = 6    # 接近前高
-
-    # ── 動能 15分（24h 漲幅）──
+    """LANA Score 0-100 v3 動能優先"""
+    # 動能 30分
     s_momentum = 0
     if change_24h is not None:
-        if change_24h >= 15:    s_momentum = 15
-        elif change_24h >= 8:   s_momentum = 12
-        elif change_24h >= 3:   s_momentum = 8
-        elif change_24h >= 0:   s_momentum = 4
-        else:                   s_momentum = 0
-
-    # ── RSI 15分 ──
+        if change_24h >= 20:    s_momentum = 30
+        elif change_24h >= 15:  s_momentum = 25
+        elif change_24h >= 10:  s_momentum = 20
+        elif change_24h >= 5:   s_momentum = 14
+        elif change_24h >= 2:   s_momentum = 8
+        elif change_24h >= 0:   s_momentum = 3
+    # 趨勢 20分
+    if ma7 and ma30 and ma120 and ma7 > ma30 > ma120:
+        s_trend = 20
+    elif ma7 and ma30 and ma7 > ma30:
+        s_trend = 14
+    elif ma7 and ma30 and ma7 > ma30 * 0.97:
+        s_trend = 8
+    else:
+        s_trend = 2
+    # 量能 20分
+    if vr is None:   s_vol = 8
+    elif vr >= 2.5:  s_vol = 20
+    elif vr >= 2.0:  s_vol = 16
+    elif vr >= 1.5:  s_vol = 12
+    elif vr >= 1.0:  s_vol = 6
+    else:            s_vol = 0
+    # RSI 15分
     if rsi_val is None:          s_rsi = 7
     elif 50 <= rsi_val < 70:     s_rsi = 15
     elif 40 <= rsi_val < 50:     s_rsi = 10
-    elif 70 <= rsi_val < 80:     s_rsi = 6   # 偏高但未超買
+    elif 70 <= rsi_val < 80:     s_rsi = 6
     elif 30 <= rsi_val < 40:     s_rsi = 8
     else:                        s_rsi = 0
-
-    # ── 量能 15分 ──
-    if vr is None:   s_vol = 7
-    elif vr >= 2.5:  s_vol = 15
-    elif vr >= 2.0:  s_vol = 12
-    elif vr >= 1.5:  s_vol = 9
-    elif vr >= 1.0:  s_vol = 5
-    else:            s_vol = 0
-
-    # ── BB位置 10分 ──
+    # BB 10分
     s_bb = {'lower_half': 10, 'below_lower': 8, 'upper_half': 6, 'above_upper': 2}.get(bb_pos, 5)
-
-    # ── 風險 5分 ──
+    # 風險 5分
     s_risk = [5, 4, 2, 1, 0][min(len(risks), 4)]
+    base = s_momentum + s_trend + s_vol + s_rsi + s_bb + s_risk
 
-    base = s_trend + s_break + s_momentum + s_rsi + s_vol + s_bb + s_risk  # 0-100
-
-    # 合約端訊號（最多 +35 / -25）
+    # 合約端訊號（最多 +30 / -25）
     s_contract = 0
     early_ambush = False
     if contract:
         oi_chg    = contract.get('oi_change_24h')
         price_chg = abs(contract.get('price_change_24h') or 0)
-        funding   = contract.get('funding')   # raw decimal, e.g. 0.0001
+        funding   = contract.get('funding')
         ls        = contract.get('ls_ratio')
         if oi_chg is not None and oi_chg >= 20 and price_chg < 5:
-            s_contract += 15; early_ambush = True  # 大戶埋伏最強訊號
+            s_contract += 15; early_ambush = True
         if funding is not None:
-            if funding < -0.0005:   s_contract += 10  # < -0.05% 軋空機會
-            elif funding > 0.001:   s_contract -= 15  # > 0.1% 過熱
+            if funding < -0.0005:   s_contract += 10
+            elif funding > 0.001:   s_contract -= 15
         if ls is not None:
-            if ls < 1.0:            s_contract += 10  # 散戶看空反指標
-            elif ls > 3.0:          s_contract -= 10  # 散戶過度看多
+            if ls < 1.0:            s_contract += 10
+            elif ls > 3.0:          s_contract -= 10
 
     raw = base + s_contract
-    # 正規化：原始上限 130 → 顯示 100
     total = max(0, min(100, round(raw / 130 * 100)))
     return {
-        "total":        total,
-        "raw":          raw,
-        "trend":        s_trend,
-        "rsi":          s_rsi,
-        "vol":          s_vol,
-        "bb":           s_bb,
-        "risk":         s_risk,
-        "contract":     s_contract,
+        "total": total, "raw": raw,
+        "trend": s_trend, "rsi": s_rsi, "vol": s_vol,
+        "bb": s_bb, "risk": s_risk, "contract": s_contract,
         "early_ambush": early_ambush,
+        "momentum": s_momentum,
     }
 
-# ── Binance API 抓取 ─────────────────────────────────────────
 def _get(url, params=None, timeout=15):
     """帶 fallback 的 GET，先試 CDN endpoint，失敗再試原始 endpoint"""
     try:
