@@ -587,7 +587,10 @@ def analyze_coin(coin):
         'funding':          funding,
         'ls_ratio':         gl_ls,
     }
-    ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks, contract=contract_ctx)
+    # high20: 近20根K線高點（突破偵測用）
+    _high20 = max([k["h"] for k in klines[-20:]]) if len(klines) >= 20 else None
+    ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks, contract=contract_ctx,
+                         price=price, high20=_high20, change_24h=c24h)
     ls_grade = ("💎 極強" if ls["total"] >= 80 else
                 "🟢 強"   if ls["total"] >= 65 else
                 "🟡 普通" if ls["total"] >= 50 else
