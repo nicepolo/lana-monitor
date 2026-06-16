@@ -1037,11 +1037,12 @@ function renderAnalysis(d) {
         </div>
       </div>
       <div class="ls-breakdown">
-        <div class="ls-item"><span class="ls-item-label">趨勢</span><div class="ls-mini-bar"><div style="width:${(ld.trend||0)/25*100}%;background:#3b82f6"></div></div><span class="ls-item-val">${ld.trend??0}/25</span></div>
-        <div class="ls-item"><span class="ls-item-label">RSI</span><div class="ls-mini-bar"><div style="width:${(ld.rsi||0)/20*100}%;background:#f0b90b"></div></div><span class="ls-item-val">${ld.rsi??0}/20</span></div>
+        <div class="ls-item"><span class="ls-item-label">動能</span><div class="ls-mini-bar"><div style="width:${(ld.momentum||0)/30*100}%;background:#f6465d"></div></div><span class="ls-item-val">${ld.momentum??0}/30</span></div>
+        <div class="ls-item"><span class="ls-item-label">趨勢</span><div class="ls-mini-bar"><div style="width:${(ld.trend||0)/20*100}%;background:#3b82f6"></div></div><span class="ls-item-val">${ld.trend??0}/20</span></div>
         <div class="ls-item"><span class="ls-item-label">量能</span><div class="ls-mini-bar"><div style="width:${(ld.vol||0)/20*100}%;background:#0ecb81"></div></div><span class="ls-item-val">${ld.vol??0}/20</span></div>
-        <div class="ls-item"><span class="ls-item-label">BB位置</span><div class="ls-mini-bar"><div style="width:${(ld.bb||0)/15*100}%;background:#a855f7"></div></div><span class="ls-item-val">${ld.bb??0}/15</span></div>
-        <div class="ls-item"><span class="ls-item-label">風險</span><div class="ls-mini-bar"><div style="width:${(ld.risk||0)/20*100}%;background:${(ld.risk||0)>=15?'#0ecb81':'#f6465d'}"></div></div><span class="ls-item-val">${ld.risk??0}/20</span></div>
+        <div class="ls-item"><span class="ls-item-label">RSI</span><div class="ls-mini-bar"><div style="width:${(ld.rsi||0)/15*100}%;background:#f0b90b"></div></div><span class="ls-item-val">${ld.rsi??0}/15</span></div>
+        <div class="ls-item"><span class="ls-item-label">BB位置</span><div class="ls-mini-bar"><div style="width:${(ld.bb||0)/10*100}%;background:#a855f7"></div></div><span class="ls-item-val">${ld.bb??0}/10</span></div>
+        <div class="ls-item"><span class="ls-item-label">風險</span><div class="ls-mini-bar"><div style="width:${(ld.risk||0)/5*100}%;background:${(ld.risk||0)>=4?'#0ecb81':'#f6465d'}"></div></div><span class="ls-item-val">${ld.risk??0}/5</span></div>
         ${(ld.contract != null && ld.contract !== 0) ? `<div class="ls-item"><span class="ls-item-label">合約加減</span><div class="ls-mini-bar"><div style="width:${Math.abs(ld.contract)/35*100}%;background:${ld.contract>0?'#a855f7':'#f6465d'}"></div></div><span class="ls-item-val" style="color:${ld.contract>0?'#a855f7':'#f6465d'}">${ld.contract>0?'+':''}${ld.contract}</span></div>` : ''}
       </div>
       <div class="ls-advice">${buildLsAdvice(d.lana_score, ld, d)}</div>
