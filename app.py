@@ -19,6 +19,10 @@ _meme_cache_time = 0
 
 app = Flask(__name__)
 
+import logging
+log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
 NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJcWtwWEYrQJXfG6OtCf9HaE")
@@ -504,26 +508,43 @@ def fetch_oi_change(symbol):
 STABLECOINS = {"USDT","USDC","DAI","BUSD","TUSD","FDUSD","USDP","GUSD","FRAX","USDD"}
 WRAPPED     = {"WBTC","WETH","WBNB","STETH","WSTETH","CBBTC","RETH","BETH"}
 
+MARKET_SCAN_MIN_VOL_USD = int(os.environ.get("MARKET_SCAN_MIN_VOL_USD", 5_000_000))
+MARKET_SCAN_TOP_N       = int(os.environ.get("MARKET_SCAN_TOP_N", 25))
+
 def fetch_market_scan():
-    r = _get(f"{BINANCE_BASE}/api/v3/ticker/24hr", timeout=20)
+    """動態抓幣 stage1：OKX 全市場 ticker 一次抓 → 流動性門檻篩選 →
+    依漲跌幅絕對值排序（同時涵蓋 LONG/SHORT 機會）取前 N 個候選。
+    候選清單再交給 /api/scan 算 LANA 分（stage2），避免對全市場逐一跑 K 線造成 timeout。"""
+    try:
+        import requests as _rq
+        r = _rq.get("https://www.okx.com/api/v5/market/tickers",
+                    params={"instType": "SWAP"}, timeout=15)
+        r.raise_for_status()
+        data = r.json().get("data", [])
+    except Exception as e:
+        log.warning(f"OKX 全市場抓取失敗: {e}")
+        return []
+
     results = []
-    for t in r.json():
-        sym = t["symbol"]
-        if not sym.endswith("USDT"):
+    for t in data:
+        inst = t.get("instId", "")
+        if not inst.endswith("-USDT-SWAP"):
             continue
-        coin = sym[:-4]
+        coin = inst.replace("-USDT-SWAP", "")
         if coin in STABLECOINS or coin in WRAPPED:
             continue
         try:
-            chg = float(t["priceChangePercent"])
-            vol = float(t["quoteVolume"])
-            prc = float(t["lastPrice"])
-        except:
+            last   = float(t.get("last", 0) or 0)
+            open24 = float(t.get("open24h", 0) or 0)
+            vol    = float(t.get("volCcy24h", 0) or 0)
+        except (TypeError, ValueError):
             continue
-        if chg < 5 or chg > 300 or vol < 20_000_000:
+        if vol < MARKET_SCAN_MIN_VOL_USD or open24 <= 0 or last <= 0:
             continue
-        results.append({"coin": coin, "price": prc,
+        chg = (last / open24 - 1) * 100
+        results.append({"coin": coin, "price": last,
                         "change": round(chg, 2), "volume": round(vol)})
+
     # 去重（同一幣只留第一筆）
     seen = set()
     unique = []
@@ -531,8 +552,10 @@ def fetch_market_scan():
         if r["coin"] not in seen:
             seen.add(r["coin"])
             unique.append(r)
-    unique.sort(key=lambda x: x["change"], reverse=True)
-    return unique[:30]
+
+    # 依漲跌幅絕對值排序：量先於價的策略下，大幅波動（不分漲跌）才是值得進一步算分的候選
+    unique.sort(key=lambda x: abs(x["change"]), reverse=True)
+    return unique[:MARKET_SCAN_TOP_N]
 
 # ── 深度分析 ────────────────────────────────────────────────
 def analyze_coin(coin):
