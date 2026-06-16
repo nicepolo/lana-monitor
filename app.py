@@ -1538,23 +1538,33 @@ def api_ai_analyze():
         gemini_key    = os.getenv("GEMINI_API_KEY", "")
         result = None
 
-        # 先試 Gemini
+        # 先試 Gemini（強化解析 + 錯誤紀錄）
         if gemini_key:
             try:
                 r = requests.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
                     headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                     json={"contents": [{"parts": [{"text": prompt}]}],
-                          "generationConfig": {"temperature": 0.2, "maxOutputTokens": 500}},
-                    timeout=20
+                          "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
+                                               "responseMimeType": "application/json"}},
+                    timeout=25
                 )
                 if r.ok:
-                    text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-                    text = text.strip().replace("```json","").replace("```","").strip()
-                    result = json.loads(text)
-                    result["model"] = "gemini-flash"
-            except Exception:
-                pass
+                    jr = r.json()
+                    cands = jr.get("candidates", [])
+                    if cands:
+                        parts = cands[0].get("content", {}).get("parts", [])
+                        text = "".join(p.get("text", "") for p in parts)
+                        text = text.strip().replace("```json","").replace("```","").strip()
+                        if text:
+                            result = json.loads(text)
+                            result["model"] = "gemini-2.0-flash"
+                    if not result:
+                        print(f"[Gemini] 解析失敗 {coin}: finishReason={cands[0].get('finishReason') if cands else 'no candidates'}")
+                else:
+                    print(f"[Gemini] HTTP {r.status_code} {coin}: {r.text[:200]}")
+            except Exception as e:
+                print(f"[Gemini] 例外 {coin}: {e}")
 
         # 備援 Claude
         if not result and anthropic_key:
