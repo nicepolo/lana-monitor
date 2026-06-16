@@ -635,6 +635,57 @@ def analyze_coin(coin):
     }
 
 # ── Routes ───────────────────────────────────────────────────
+@app.route("/api/test_market")
+def api_test_market():
+    """測試動態抓幣可行性：OKX 全市場 + 幣安永續清單 + 交集"""
+    import requests as _rq
+    out = {}
+    # 1. OKX 全市場 SWAP
+    try:
+        r = _rq.get("https://www.okx.com/api/v5/market/tickers",
+                    params={"instType": "SWAP"}, timeout=15)
+        if r.ok:
+            data = r.json().get("data", [])
+            okx_usdt = {}
+            for t in data:
+                inst = t.get("instId", "")
+                if inst.endswith("-USDT-SWAP"):
+                    coin = inst.replace("-USDT-SWAP", "")
+                    vol = float(t.get("volCcy24h", 0) or 0)
+                    chg = (float(t.get("last", 0) or 0) / float(t.get("open24h", 1) or 1) - 1) * 100
+                    okx_usdt[coin] = {"vol24h_usd": round(vol), "change_24h": round(chg, 1)}
+            out["okx_count"] = len(okx_usdt)
+            out["okx_sample"] = dict(list(okx_usdt.items())[:3])
+            out["_okx_coins"] = set(okx_usdt.keys())
+        else:
+            out["okx_error"] = f"HTTP {r.status_code}"
+    except Exception as e:
+        out["okx_error"] = str(e)[:100]
+
+    # 2. 幣安永續合約清單
+    try:
+        r = _rq.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=15)
+        if r.ok:
+            syms = r.json().get("symbols", [])
+            bn = {s["baseAsset"] for s in syms
+                  if s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING"
+                  and s.get("contractType") == "PERPETUAL"}
+            out["binance_count"] = len(bn)
+            out["_binance_coins"] = bn
+        else:
+            out["binance_error"] = f"HTTP {r.status_code}"
+    except Exception as e:
+        out["binance_error"] = str(e)[:100]
+
+    # 3. 交集 + 流動性篩選
+    if "_okx_coins" in out and "_binance_coins" in out:
+        inter = out["_okx_coins"] & out["_binance_coins"]
+        out["intersection_count"] = len(inter)
+        out["intersection_sample"] = sorted(list(inter))[:15]
+    out.pop("_okx_coins", None)
+    out.pop("_binance_coins", None)
+    return jsonify(out)
+
 @app.route("/")
 def index():
     return render_template("index.html")
