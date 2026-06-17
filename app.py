@@ -311,21 +311,22 @@ def vol_ratio(volumes):
 def calc_lana_score(ma7, ma30, ma120, rsi_val, vr, bb_pos, risks, contract=None,
                     price=None, high20=None, change_24h=None):
     """LANA Score 0-100 v3 動能優先"""
-    # 動能 30分
+    # 動能 30分（多空對等：用漲跌幅絕對值，跌幅夠深一樣給高分）
     s_momentum = 0
     if change_24h is not None:
-        if change_24h >= 20:    s_momentum = 30
-        elif change_24h >= 15:  s_momentum = 25
-        elif change_24h >= 10:  s_momentum = 20
-        elif change_24h >= 5:   s_momentum = 14
-        elif change_24h >= 2:   s_momentum = 8
-        elif change_24h >= 0:   s_momentum = 3
-    # 趨勢 20分
-    if ma7 and ma30 and ma120 and ma7 > ma30 > ma120:
+        abs_chg = abs(change_24h)
+        if abs_chg >= 20:    s_momentum = 30
+        elif abs_chg >= 15:  s_momentum = 25
+        elif abs_chg >= 10:  s_momentum = 20
+        elif abs_chg >= 5:   s_momentum = 14
+        elif abs_chg >= 2:   s_momentum = 8
+        else:                s_momentum = 3
+    # 趨勢 20分（多空對等：空頭排列同樣視為強趨勢）
+    if ma7 and ma30 and ma120 and (ma7 > ma30 > ma120 or ma7 < ma30 < ma120):
         s_trend = 20
-    elif ma7 and ma30 and ma7 > ma30:
+    elif ma7 and ma30 and abs(ma7 - ma30) > ma30 * 0.03:
         s_trend = 14
-    elif ma7 and ma30 and ma7 > ma30 * 0.97:
+    elif ma7 and ma30 and abs(ma7 - ma30) > ma30 * 0.005:
         s_trend = 8
     else:
         s_trend = 2
@@ -1595,14 +1596,16 @@ def api_ai_analyze():
 技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={'上升' if ma_bull else '中性'}，布林位置={bb_pos}，資金費率={funding:+.4f}%
 {kline_context}
 
-⚠️ 判斷原則（平衡看待，不過度保守）：
-- 24H 漲幅 >15% 且量能放大，代表有資金進場，是強勢標的，回調未破關鍵支撐前仍可考慮順勢 LONG
+⚠️ 判斷原則（多空對等看待，不偏多也不偏空）：
+- 24H 漲幅 >15% 且量能放大，代表有資金進場，是強勢標的，回調未破關鍵支撐前可考慮順勢 LONG
+- 24H 跌幅 >15% 且量能放大，代表有資金出逃，是弱勢標的，反彈未過關鍵壓力前可考慮順勢 SHORT
 - 漲勢中的小幅回調（距高點 -5% 到 -10%）屬正常洗盤，若 RSI 未超買（<70）且 MA 仍多頭，可在支撐位 LONG
-- 只有以下情況才判 WATCH 或 SHORT：
-  (a) 距高點跌超 12% 且 4H 明確轉空（連續多根收黑）
-  (b) RSI >75 嚴重超買且量能萎縮（出貨訊號）
-  (c) 完全無趨勢、量能極低（vol_ratio <0.5）的死水盤
-- 強勢幣的正常回調是進場機會，不要因為小回調就一律 WATCH
+- 跌勢中的小幅反彈（距低點 +5% 到 +10%）屬正常洗空，若 RSI 未超賣（>30）且 MA 仍空頭，可在壓力位 SHORT
+- 距高點跌超 12% 且 4H 明確轉空（連續多根收黑）：趨勢已轉空，優先考慮 SHORT 而非單純 WATCH
+- 距低點漲超 12% 且 4H 明確轉多（連續多根收紅）：趨勢已轉多，優先考慮 LONG 而非單純 WATCH
+- RSI >75 嚴重超買且量能萎縮（出貨訊號）→ 傾向 SHORT 或至少 WATCH，不要繼續 LONG
+- RSI <25 嚴重超賣且量能萎縮（恐慌出清訊號）→ 傾向 LONG 或至少 WATCH，不要繼續 SHORT
+- 只有完全無趨勢、量能極低（vol_ratio <0.5）、RSI 落在 40-60 中性區，才判 WATCH
 
 做多參考價位：止損 {sl_long}，目標1 {t1_long}，目標2 {t2_long}
 做空參考價位：止損 {sl_short}，目標1 {t1_short}，目標2 {t2_short}
