@@ -2410,26 +2410,34 @@ function renderAIResult(r) {
   var dirText  = r.direction === 'LONG' ? '▲ 做多' : r.direction === 'SHORT' ? '▼ 做空' : '— 觀望';
   var scoreColor = r.score >= 70 ? '#0ecb81' : r.score >= 50 ? '#f0b90b' : '#848e9c';
 
-  // ── 綜合判定：AI方向 + LANA Score 雙重確認 ──
+  // ── 綜合判定：AI方向 + LANA Score 雙重確認（多空對等） ──
   var lanaScore = (_lastAnalysis && _lastAnalysis.lana_score) || 0;
-  var aiLong = r.direction === 'LONG';
+  var aiDir = r.direction;
   var verdict, vColor, vBg, vDesc;
-  if (aiLong && lanaScore >= 55) {
+  if (aiDir === 'LONG' && lanaScore >= 55) {
     verdict = '🟢 可考慮進場';
     vColor = '#0ecb81'; vBg = '#0a2a1a';
-    vDesc = 'AI 與技術指標雙重確認，訊號較可靠';
-  } else if (aiLong && lanaScore < 55) {
-    verdict = '🟡 AI單方面看好，需謹慎';
+    vDesc = 'AI 與技術指標雙重確認看多，訊號較可靠';
+  } else if (aiDir === 'SHORT' && lanaScore >= 55) {
+    verdict = '🟢 可考慮進場';
+    vColor = '#0ecb81'; vBg = '#0a2a1a';
+    vDesc = 'AI 與技術指標雙重確認看空，訊號較可靠';
+  } else if (aiDir === 'LONG' && lanaScore < 55) {
+    verdict = '🟡 AI單方面看多，需謹慎';
     vColor = '#f0b90b'; vBg = '#2a2410';
     vDesc = 'AI 看多但技術指標分數偏低（' + lanaScore + '分），可能量能不足，建議小倉或再觀察';
-  } else if (!aiLong && lanaScore >= 55) {
+  } else if (aiDir === 'SHORT' && lanaScore < 55) {
+    verdict = '🟡 AI單方面看空，需謹慎';
+    vColor = '#f0b90b'; vBg = '#2a2410';
+    vDesc = 'AI 看空但技術指標分數偏低（' + lanaScore + '分），可能量能不足，建議小倉或再觀察';
+  } else if (aiDir !== 'LONG' && aiDir !== 'SHORT' && lanaScore >= 55) {
     verdict = '⚪ 技術面不錯，等AI確認';
     vColor = '#848e9c'; vBg = '#1a1f2e';
-    vDesc = '技術指標分數高但 AI 建議' + dirText + '，先觀望等更明確訊號';
+    vDesc = '技術指標分數高但 AI 建議觀望，先觀望等更明確訊號';
   } else {
     verdict = '🔴 不建議進場';
     vColor = '#f6465d'; vBg = '#2a0a0a';
-    vDesc = 'AI 與技術指標都不支持做多，避免進場';
+    vDesc = 'AI 與技術指標都沒有明確方向，避免進場';
   }
 
   el.innerHTML =
