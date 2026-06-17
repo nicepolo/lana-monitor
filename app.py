@@ -915,7 +915,7 @@ def api_scan():
         data.sort(key=lambda x: (0 if x['coin'] in wl_set else 1, -x['change']))
         return jsonify({"ok": True, "data": data,
                         "watchlist": wl,
-                        "ts": datetime.now().strftime("%Y-%m-%d %H:%M")})
+                        "ts": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
