@@ -19,9 +19,13 @@ _meme_cache_time = 0
 
 app = Flask(__name__)
 
-import logging
+import logging, time
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+# AI 分析冷卻快取（伺服器記憶體，跨請求持續存在；cron 端每次都是全新容器，無法自行記憶冷卻）
+_ai_analyze_cache = {}   # {coin: {"ts": float, "result": dict}}
+AI_ANALYZE_COOLDOWN_SEC = 4 * 3600
 
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
 NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
@@ -1550,6 +1554,15 @@ def api_ai_analyze():
         if not coin:
             return jsonify({"error": "symbol required"}), 400
 
+        # 冷卻檢查：4小時內已分析過同一顆幣，直接回快取結果，不重打 AI（省成本的關鍵）
+        cached = _ai_analyze_cache.get(coin)
+        now_ts = time.time()
+        if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
+            resp = jsonify(cached["result"])
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["X-Cache"] = "hit"
+            return resp
+
         # 取技術指標
         try:
             d = analyze_coin(coin)
@@ -1768,6 +1781,8 @@ def api_ai_analyze():
                 result["stop_loss"] = fix(result.get("stop_loss"), sl_long)
                 result["target_1"]  = fix(result.get("target_1"),  t1_long)
                 result["target_2"]  = fix(result.get("target_2"),  t2_long)
+
+        _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
 
         resp = jsonify(result)
         resp.headers["Access-Control-Allow-Origin"] = "*"
