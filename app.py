@@ -1774,13 +1774,23 @@ def api_ai_analyze():
         direction = result.get("direction", "WATCH")
         if price > 0:
             if direction == "SHORT":
-                result["stop_loss"] = fix(result.get("stop_loss"), sl_short)
-                result["target_1"]  = fix(result.get("target_1"),  t1_short)
-                result["target_2"]  = fix(result.get("target_2"),  t2_short)
+                entry = fix(result.get("entry_zone"), round(price * 1.005, 6))
+                sl    = fix(result.get("stop_loss"), sl_short)
+                if sl <= entry:  # 做空止損必須高於入場價，否則設定無意義
+                    sl = max(sl_short, round(entry * 1.02, 6))
+                result["entry_zone"] = entry
+                result["stop_loss"]  = sl
+                result["target_1"]   = fix(result.get("target_1"),  t1_short)
+                result["target_2"]   = fix(result.get("target_2"),  t2_short)
             else:
-                result["stop_loss"] = fix(result.get("stop_loss"), sl_long)
-                result["target_1"]  = fix(result.get("target_1"),  t1_long)
-                result["target_2"]  = fix(result.get("target_2"),  t2_long)
+                entry = fix(result.get("entry_zone"), round(price * 0.995, 6))
+                sl    = fix(result.get("stop_loss"), sl_long)
+                if sl >= entry:  # 做多止損必須低於入場價，否則設定無意義
+                    sl = min(sl_long, round(entry * 0.98, 6))
+                result["entry_zone"] = entry
+                result["stop_loss"]  = sl
+                result["target_1"]   = fix(result.get("target_1"),  t1_long)
+                result["target_2"]   = fix(result.get("target_2"),  t2_long)
 
         _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
 
