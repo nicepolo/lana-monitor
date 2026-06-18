@@ -1751,6 +1751,7 @@ def api_ai_analyze():
             result = {
                 "direction": direction,
                 "score": score,
+                "model": "rules",
                 "confidence": "高" if score >= 70 else "中" if score >= 50 else "低",
                 "summary": summary,
                 "reason": f"{rsi_txt}；{vol_txt}；{'布林下軌支撐' if bb_val<0.3 else '布林中軌附近'}{('；' + kline_note) if kline_note else ''}",
