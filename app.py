@@ -1544,74 +1544,52 @@ def api_entry_index_telegram():
 
 
 @app.route("/api/ai_analyze", methods=["POST", "OPTIONS"])
-def api_ai_analyze():
-    # CORS
-    if request.method == "OPTIONS":
-        resp = jsonify({})
-        resp.headers["Access-Control-Allow-Origin"] = "*"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        return resp
+def _do_ai_analyze(coin, price=0, change24h=0):
+    """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
+    now_ts = time.time()
+
+    # 冷卻檢查
+    cached = _ai_analyze_cache.get(coin)
+    if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
+        return cached["result"]
+
+    # 取技術指標
+    try:
+        d = analyze_coin(coin)
+        rsi_1h  = d.get("rsi", 50) or 50
+        vol_r   = d.get("vol_ratio", 1.0) or 1.0
+        funding = d.get("funding_rate", 0) or 0
+        ma_bull = d.get("ma_bull", False)
+        bb_pos  = d.get("bb_position", "middle")
+        price   = price or d.get("price", 0)
+    except Exception:
+        rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; bb_pos = "middle"; d = {}
+
+    trend = "up" if ma_bull else "neutral"
+    sl_long  = round(price * 0.97, 6) if price else 0
+    t1_long  = round(price * 1.04, 6) if price else 0
+    t2_long  = round(price * 1.08, 6) if price else 0
+    sl_short = round(price * 1.03, 6) if price else 0
+    t1_short = round(price * 0.96, 6) if price else 0
+    t2_short = round(price * 0.92, 6) if price else 0
 
     try:
-        body = request.get_json() or {}
-        coin      = body.get("symbol", "").upper()
-        price     = float(body.get("price", 0))
-        change24h = float(body.get("change_24h", 0))
+        klines_4h = fetch_klines(f"{coin}USDT", "4h", 6)
+        if klines_4h and len(klines_4h) >= 4:
+            recent_high = max(k["h"] for k in klines_4h[-4:])
+            recent_low  = min(k["l"] for k in klines_4h[-4:])
+            pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
+            pct_from_low  = ((price - recent_low)  / recent_low  * 100) if recent_low  else 0
+            closes = [k["c"] for k in klines_4h[-4:]]
+            rising_count = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+            price_trend = "上升中" if rising_count >= 3 else ("下跌中" if rising_count <= 1 else "震盪")
+            kline_context = f"近4根4H K線：{price_trend}，近期高點={recent_high}（現價距高點{pct_from_high:+.1f}%），近期低點={recent_low}（現價距低點{pct_from_low:+.1f}%）"
+        else:
+            kline_context = "K線資料不足"
+    except:
+        kline_context = "K線資料取得失敗"
 
-        if not coin:
-            return jsonify({"error": "symbol required"}), 400
-
-        # 冷卻檢查：4小時內已分析過同一顆幣，直接回快取結果，不重打 AI（省成本的關鍵）
-        cached = _ai_analyze_cache.get(coin)
-        now_ts = time.time()
-        if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
-            resp = jsonify(cached["result"])
-            resp.headers["Access-Control-Allow-Origin"] = "*"
-            resp.headers["X-Cache"] = "hit"
-            return resp
-
-        # 取技術指標
-        try:
-            d = analyze_coin(coin)
-            rsi_1h  = d.get("rsi", 50) or 50
-            vol_r   = d.get("vol_ratio", 1.0) or 1.0
-            funding = d.get("funding_rate", 0) or 0
-            ma_bull = d.get("ma_bull", False)
-            bb_pos  = d.get("bb_position", "middle")
-            price   = price or d.get("price", 0)
-        except Exception:
-            rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; bb_pos = "middle"
-
-        trend = "up" if ma_bull else "neutral"
-
-        # 參考價位
-        sl_long  = round(price * 0.97, 6) if price else 0
-        t1_long  = round(price * 1.04, 6) if price else 0
-        t2_long  = round(price * 1.08, 6) if price else 0
-        sl_short = round(price * 1.03, 6) if price else 0
-        t1_short = round(price * 0.96, 6) if price else 0
-        t2_short = round(price * 0.92, 6) if price else 0
-
-        # 計算近期高低點和 K 線方向（4H K線最近 6 根）
-        try:
-            klines_4h = fetch_klines(f"{coin}USDT", "4h", 6)
-            if klines_4h and len(klines_4h) >= 4:
-                recent_high = max(k["h"] for k in klines_4h[-4:])
-                recent_low  = min(k["l"] for k in klines_4h[-4:])
-                pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
-                pct_from_low  = ((price - recent_low)  / recent_low  * 100) if recent_low  else 0
-                # 判斷近期趨勢：最後4根收盤是上升還是下降
-                closes = [k["c"] for k in klines_4h[-4:]]
-                rising_count = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
-                price_trend = "上升中" if rising_count >= 3 else ("下跌中" if rising_count <= 1 else "震盪")
-                kline_context = f"近4根4H K線：{price_trend}，近期高點={recent_high}（現價距高點{pct_from_high:+.1f}%），近期低點={recent_low}（現價距低點{pct_from_low:+.1f}%）"
-            else:
-                kline_context = "K線資料不足"
-        except:
-            kline_context = "K線資料取得失敗"
-
-        prompt = f"""你是專業加密貨幣短線交易員。分析 {coin}/USDT。
+    prompt = f"""你是專業加密貨幣短線交易員。分析 {coin}/USDT。
 
 現價：{price}，24H漲幅：{change24h:+.1f}%
 技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={'上升' if ma_bull else '中性'}，布林位置={bb_pos}，資金費率={funding:+.4f}%
@@ -1635,174 +1613,105 @@ def api_ai_analyze():
 只輸出JSON：
 {{"direction":"LONG或SHORT或WATCH","score":0-100,"confidence":"高或中或低","summary":"一句話","reason":"技術原因","entry_zone":數字,"stop_loss":數字,"target_1":數字,"target_2":數字,"timeframe":"持倉時間","risk_note":"風險"}}"""
 
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-        gemini_key    = os.getenv("GEMINI_API_KEY", "")
-        result = None
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    gemini_key    = os.getenv("GEMINI_API_KEY", "")
+    result = None
 
-        # 先試 Gemini（強化解析 + 錯誤紀錄）
-        if gemini_key:
-            try:
-                r = requests.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                    headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
-                    json={"contents": [{"parts": [{"text": prompt}]}],
-                          "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
-                                               "responseMimeType": "application/json"}},
-                    timeout=25
-                )
-                if r.ok:
-                    jr = r.json()
-                    cands = jr.get("candidates", [])
-                    if cands:
-                        parts = cands[0].get("content", {}).get("parts", [])
-                        text = "".join(p.get("text", "") for p in parts)
-                        text = text.strip().replace("```json","").replace("```","").strip()
-                        if text:
-                            result = json.loads(text)
-                            result["model"] = "gemini-2.0-flash"
-                    if not result:
-                        print(f"[Gemini] 解析失敗 {coin}: finishReason={cands[0].get('finishReason') if cands else 'no candidates'}")
-                else:
-                    print(f"[Gemini] HTTP {r.status_code} {coin}: {r.text[:200]}")
-            except Exception as e:
-                print(f"[Gemini] 例外 {coin}: {e}")
-
-        # 備援 Claude
-        if not result and anthropic_key:
-            try:
-                r = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
-                             "content-type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
-                          "messages": [{"role": "user", "content": prompt}]},
-                    timeout=20
-                )
-                if r.ok:
-                    text = r.json()["content"][0]["text"]
+    if gemini_key:
+        try:
+            r = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
+                                           "responseMimeType": "application/json"}},
+                timeout=25
+            )
+            if r.ok:
+                jr = r.json()
+                cands = jr.get("candidates", [])
+                if cands:
+                    parts = cands[0].get("content", {}).get("parts", [])
+                    text = "".join(p.get("text", "") for p in parts)
                     text = text.strip().replace("```json","").replace("```","").strip()
-                    result = json.loads(text)
-                    result["model"] = "claude-haiku"
-            except Exception:
-                pass
+                    if text:
+                        result = json.loads(text)
+                        result["model"] = "gemini-2.0-flash"
+        except Exception as e:
+            print(f"[Gemini] 例外 {coin}: {e}")
 
-        if not result:
-            # AI 失敗時用規則式備用（與 meme-scanner 同一套評分標準）
-            # 趨勢 25分
-            s_trend = 25 if ma_bull else 0
-            # RSI 20分
-            if 50 <= rsi_1h < 70:    s_rsi = 20
-            elif 40 <= rsi_1h < 50:  s_rsi = 15
-            elif 30 <= rsi_1h < 40:  s_rsi = 10
-            elif 70 <= rsi_1h < 80:  s_rsi = 8
-            else:                    s_rsi = 0
-            # 量能 20分
-            if vol_r >= 2.0:   s_vol = 20
-            elif vol_r >= 1.5: s_vol = 16
-            elif vol_r >= 1.0: s_vol = 12
-            elif vol_r >= 0.8: s_vol = 6
-            else:              s_vol = 0
-            # BB 15分（用 bb_pct_b）
-            bb_val = d.get("bb_position_val", 0.5) if isinstance(d.get("bb_position_val"), float) else 0.5
-            if bb_val < 0.3:     s_bb = 15
-            elif bb_val < 0.5:   s_bb = 12
-            elif bb_val <= 0.7:  s_bb = 8
-            else:                s_bb = 4
-            # 資金費率 20分
-            fr_val = d.get("funding_rate", 0)
-            if abs(fr_val) < 0.0001:    s_fr = 20
-            elif abs(fr_val) < 0.0005:  s_fr = 15
-            elif fr_val < -0.0005:      s_fr = 18
-            elif fr_val > 0.001:        s_fr = 2
-            else:                       s_fr = 8
+    if not result and anthropic_key:
+        try:
+            r = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
+                         "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                      "messages": [{"role": "user", "content": prompt}]},
+                timeout=20
+            )
+            if r.ok:
+                text = r.json()["content"][0]["text"]
+                text = text.strip().replace("```json","").replace("```","").strip()
+                result = json.loads(text)
+                result["model"] = "claude-haiku"
+        except Exception:
+            pass
 
-            score = max(0, min(100, s_trend + s_rsi + s_vol + s_bb + s_fr))
+    if not result:
+        result = {"direction": "WATCH", "score": 50, "model": "rules",
+                  "summary": "AI分析暫時無法使用", "reason": "",
+                  "entry_zone": 0, "stop_loss": 0, "target_1": 0, "target_2": 0,
+                  "timeframe": "N/A", "risk_note": "請稍後再試"}
 
-            # 加入 K 線趨勢判斷（與 AI 版本一致）
-            kline_penalty = 0
-            kline_note = ""
-            try:
-                klines_4h = fetch_klines(f"{coin}USDT", "4h", 6)
-                if klines_4h and len(klines_4h) >= 4:
-                    recent_high = max(k["h"] for k in klines_4h[-4:])
-                    pct_from_high = ((price - recent_high) / recent_high * 100) if recent_high else 0
-                    closes = [k["c"] for k in klines_4h[-4:]]
-                    rising = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
-                    price_trend = "上升中" if rising >= 3 else ("下跌中" if rising <= 1 else "震盪")
-                    if pct_from_high < -5 and price_trend == "下跌中":
-                        kline_penalty = 0
-                        kline_note = f"距高點{pct_from_high:.1f}%且K線下跌中，謹慎操作"
-                    elif pct_from_high < -5:
-                        kline_penalty = 0
-                        kline_note = f"距高點{pct_from_high:.1f}%，留意壓力"
-            except:
-                pass
+    # 修正進出場數字合理性
+    def fix(v, default):
+        try:
+            f = float(v)
+            return f if f > 0 else default
+        except:
+            return default
 
-            score = max(0, score - kline_penalty)
-            # SHORT 條件：MA空頭排列 且 RSI偏高 或 距高點大幅回落
-            ma_bear = not ma_bull and ma7 and ma25 and ma7 < ma25
-            if score >= 65 and ma_bull and rsi_1h < 75:
-                direction = "LONG"
-            elif ma_bear and rsi_1h > 55 and kline_penalty >= 15:
-                direction = "SHORT"
-            else:
-                direction = "WATCH"
+    direction = result.get("direction", "WATCH")
+    if price > 0:
+        if direction == "SHORT":
+            entry = fix(result.get("entry_zone"), round(price * 1.005, 6))
+            sl    = fix(result.get("stop_loss"), sl_short)
+            if sl <= entry: sl = max(sl_short, round(entry * 1.02, 6))
+            result["entry_zone"] = entry; result["stop_loss"] = sl
+            result["target_1"]   = fix(result.get("target_1"), t1_short)
+            result["target_2"]   = fix(result.get("target_2"), t2_short)
+        else:
+            entry = fix(result.get("entry_zone"), round(price * 0.995, 6))
+            sl    = fix(result.get("stop_loss"), sl_long)
+            if sl >= entry: sl = min(sl_long, round(entry * 0.98, 6))
+            result["entry_zone"] = entry; result["stop_loss"] = sl
+            result["target_1"]   = fix(result.get("target_1"), t1_long)
+            result["target_2"]   = fix(result.get("target_2"), t2_long)
 
-            # 說明文字
-            trend_txt = "MA多頭排列" if ma_bull else "MA偏空整理"
-            rsi_txt = f"RSI={rsi_1h:.0f}{'超買' if rsi_1h>=70 else '偏強' if rsi_1h>=55 else '中性' if rsi_1h>=45 else '偏弱'}"
-            vol_txt = f"量能{vol_r:.1f}x{'放量' if vol_r>=1.5 else '平穩' if vol_r>=1.0 else '偏弱'}"
-            summary = f"{trend_txt}，{rsi_txt}，{vol_txt}"
-            if kline_note:
-                summary = f"⚠️ {kline_note}"
+    _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
+    return result
 
-            result = {
-                "direction": direction,
-                "score": score,
-                "model": "rules",
-                "confidence": "高" if score >= 70 else "中" if score >= 50 else "低",
-                "summary": summary,
-                "reason": f"{rsi_txt}；{vol_txt}；{'布林下軌支撐' if bb_val<0.3 else '布林中軌附近'}{('；' + kline_note) if kline_note else ''}",
-                "entry_zone": round(price * 0.995, 4) if price else 0,
-                "stop_loss": sl_long,
-                "target_1": t1_long,
-                "target_2": t2_long,
-                "timeframe": "4-8小時",
-                "risk_note": kline_note if kline_note else ("量能偏弱需觀察" if vol_r < 1.0 else ("RSI超買注意回調" if rsi_1h >= 70 else "嚴控倉位，設好止損")),
-                "model": "rules"
-            }
 
-        # 確保數字欄位有值
-        def fix(v, default):
-            try:
-                f = float(v)
-                return f if f > 0 else default
-            except:
-                return default
+def api_ai_analyze():
+    # CORS
+    if request.method == "OPTIONS":
+        resp = jsonify({})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        return resp
 
-        direction = result.get("direction", "WATCH")
-        if price > 0:
-            if direction == "SHORT":
-                entry = fix(result.get("entry_zone"), round(price * 1.005, 6))
-                sl    = fix(result.get("stop_loss"), sl_short)
-                if sl <= entry:  # 做空止損必須高於入場價，否則設定無意義
-                    sl = max(sl_short, round(entry * 1.02, 6))
-                result["entry_zone"] = entry
-                result["stop_loss"]  = sl
-                result["target_1"]   = fix(result.get("target_1"),  t1_short)
-                result["target_2"]   = fix(result.get("target_2"),  t2_short)
-            else:
-                entry = fix(result.get("entry_zone"), round(price * 0.995, 6))
-                sl    = fix(result.get("stop_loss"), sl_long)
-                if sl >= entry:  # 做多止損必須低於入場價，否則設定無意義
-                    sl = min(sl_long, round(entry * 0.98, 6))
-                result["entry_zone"] = entry
-                result["stop_loss"]  = sl
-                result["target_1"]   = fix(result.get("target_1"),  t1_long)
-                result["target_2"]   = fix(result.get("target_2"),  t2_long)
+    try:
+        body = request.get_json() or {}
+        coin      = body.get("symbol", "").upper()
+        price     = float(body.get("price", 0))
+        change24h = float(body.get("change_24h", 0))
 
-        _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
+        if not coin:
+            return jsonify({"error": "symbol required"}), 400
 
+        result = _do_ai_analyze(coin, price, change24h)
         resp = jsonify(result)
         resp.headers["Access-Control-Allow-Origin"] = "*"
         return resp
@@ -1900,10 +1809,9 @@ def telegram_webhook():
                 _tg_edit_message(chat_id, msg_id,
                     cq["message"].get("text", "") + "\n\n⏳ 正在進行深度分析，約30秒...")
                 try:
-                    r = requests.post(f"{WEB_BASE_URL}/api/ai_analyze",
-                        json={"symbol": coin, "force": True}, timeout=60)
-                    if r.ok:
-                        res = r.json()
+                    # 直接呼叫函式，不打 HTTP 自己（避免 gunicorn single-worker deadlock）
+                    res = _do_ai_analyze(coin)
+                    if res:
                         import html as _html
                         dir_emoji = {"LONG": "🟢", "SHORT": "🔴"}.get(res.get("direction",""), "⚪")
                         dir_text  = {"LONG": "做多 ▲", "SHORT": "做空 ▼"}.get(res.get("direction",""), "觀望")
@@ -1913,18 +1821,18 @@ def telegram_webhook():
                         t1 = res.get("target_1",""); t2 = res.get("target_2","")
                         lines = [
                             f"{dir_emoji} <b>{coin}/USDT 深度分析</b>",
-                            f"方向: {dir_text}  信心: {conf}  分數: {score}/100",
-                            f"\n📌 {_html.escape(res.get('summary',''))}" if res.get("summary") else "",
-                            f"<i>{_html.escape(res.get('reason',''))}</i>" if res.get("reason") else "",
+                            f"方向: {dir_text}  信心: {conf}  AI分數: {score}/100",
+                            f"\n📌 {_html.escape(str(res.get('summary','')))}" if res.get("summary") else "",
+                            f"<i>{_html.escape(str(res.get('reason','')))}</i>" if res.get("reason") else "",
                             f"\n🎯 入場: {entry}\n🔴 止損: {sl}\n✅ 目標1: {t1}\n🏆 目標2: {t2}" if entry else "",
-                            f"⏱ 持倉: {res.get('timeframe','4-8小時')}\n⚠️ {_html.escape(res.get('risk_note','嚴控倉位'))}",
+                            f"⏱ 持倉: {res.get('timeframe','4-8小時')}\n⚠️ {_html.escape(str(res.get('risk_note','嚴控倉位')))}",
                             f"\n⏰ {datetime.now(taipei).strftime('%H:%M')}"
                         ]
                         _tg_send(chat_id, "\n".join(l for l in lines if l))
                     else:
-                        _tg_send(chat_id, f"❌ 分析失敗 (HTTP {r.status_code})")
+                        _tg_send(chat_id, f"❌ {coin} 分析失敗，請稍後再試")
                 except Exception as e:
-                    log.error(f"[webhook] analyze error: {e}")
+                    log.error(f"[webhook] analyze error: {e}", exc_info=True)
                     _tg_send(chat_id, f"❌ 分析錯誤: {e}")
 
             elif action.startswith("pause:"):
