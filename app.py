@@ -1931,24 +1931,18 @@ def api_push_control():
             _push_control["paused"] = False
             _push_control["pause_until"] = None
 
-        # 靜默時段判斷（02:00–07:00 台灣時間）
-        now_tw = datetime.now(taipei)
-        quiet = 2 <= now_tw.hour < 7
         paused = _push_control["paused"]
-
         until_str = ""
         if paused and _push_control["pause_until"]:
             until_str = datetime.fromtimestamp(_push_control["pause_until"], taipei).strftime("%H:%M")
 
         return jsonify({
-            "should_push": not paused and not quiet,
+            "should_push": not paused,
             "paused": paused,
-            "quiet_hours": quiet,
             "pause_until": until_str,
             "message": (
-                f"靜默時段（02:00-07:00）" if quiet and not paused else
                 f"手動暫停中（到 {until_str}）" if paused and until_str else
-                "手動暫停中（直到 /resume）" if paused else
+                "手動暫停中（直到恢復）" if paused else
                 "推送中"
             )
         })
