@@ -1840,20 +1840,25 @@ def telegram_webhook():
                 requests.post(f"{WEB_BASE_URL}/api/push_control",
                     json={"action": "pause", "hours": hours}, timeout=8)
                 if hours == 0:
-                    _tg_send(chat_id, "⏸ 已永久暫停推送，按下方按鈕可恢復",
+                    _tg_send(chat_id, "⏸ 已永久暫停推送",
                         reply_markup={"inline_keyboard": [[
-                            {"text": "▶️ 恢復推送", "callback_data": "resume"}]]})
+                            {"text": "▶️ 恢復推送", "callback_data": "resume"},
+                            {"text": "📊 查看狀態", "callback_data": "status"}]]})
                 else:
                     until_t = datetime.now(taipei) + timedelta(hours=hours)
                     _tg_send(chat_id,
                         f"⏸ 已暫停推送 {int(hours)} 小時（到 {until_t.strftime('%H:%M')}）",
                         reply_markup={"inline_keyboard": [[
-                            {"text": "▶️ 提早恢復", "callback_data": "resume"}]]})
+                            {"text": "▶️ 提早恢復", "callback_data": "resume"},
+                            {"text": "📊 查看狀態", "callback_data": "status"}]]})
 
             elif action == "resume":
                 requests.post(f"{WEB_BASE_URL}/api/push_control",
                     json={"action": "resume"}, timeout=8)
-                _tg_send(chat_id, "▶️ 已恢復推送訊號 🟢")
+                _tg_send(chat_id, "▶️ 已恢復推送訊號 🟢",
+                    reply_markup={"inline_keyboard": [[
+                        {"text": "📊 確認狀態", "callback_data": "status"},
+                        {"text": "⏸ 暫停4小時", "callback_data": "pause:4"}]]})
 
             elif action == "status":
                 r = requests.get(f"{WEB_BASE_URL}/api/push_control", timeout=8)
