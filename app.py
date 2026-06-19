@@ -35,6 +35,8 @@ _push_control = {
 
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
 NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
+WEB_BASE_URL = os.environ.get("WEB_BASE_URL", "https://web-production-7cdf9.up.railway.app")
+
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJcWtwWEYrQJXfG6OtCf9HaE")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "405822104")
 PORT             = int(os.environ.get("PORT", 5000))
@@ -1838,6 +1840,156 @@ def api_meme_signals():
     })
     resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
+
+
+def _tg_answer_callback(callback_query_id, text=""):
+    """回應 TG 按鈕點擊（必須在 answerCallbackQuery 內回覆，否則按鈕會一直轉圈）"""
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": text},
+            timeout=5
+        )
+    except:
+        pass
+
+def _tg_send(chat_id, text, reply_markup=None):
+    """發送 TG 訊息，可附帶 inline keyboard"""
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json=payload, timeout=15
+        )
+    except Exception as e:
+        log.warning(f"TG 發送失敗: {e}")
+
+def _tg_edit_message(chat_id, message_id, text):
+    """編輯已有訊息（用於回填分析結果）"""
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id,
+                  "text": text, "parse_mode": "HTML"},
+            timeout=15
+        )
+    except Exception as e:
+        log.warning(f"TG 編輯訊息失敗: {e}")
+
+@app.route("/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+    """處理 TG 按鈕點擊與文字指令"""
+    data = request.get_json(force=True, silent=True) or {}
+    taipei = timezone(timedelta(hours=8))
+
+    # ── 處理按鈕點擊 ──
+    cq = data.get("callback_query")
+    if cq:
+        cq_id   = cq["id"]
+        chat_id = str(cq["message"]["chat"]["id"])
+        msg_id  = cq["message"]["message_id"]
+        action  = cq.get("data", "")
+
+        _tg_answer_callback(cq_id, "處理中...")
+
+        if action.startswith("analyze:"):
+            coin = action.split(":", 1)[1]
+            _tg_edit_message(chat_id, msg_id,
+                cq["message"].get("text", "") + "\n\n⏳ 正在進行深度分析，約30秒...")
+            try:
+                r = requests.post(
+                    f"{WEB_BASE_URL}/api/ai_analyze",
+                    json={"symbol": coin, "force": True},
+                    timeout=60
+                )
+                if r.ok:
+                    res = r.json()
+                    dir_emoji = {"LONG": "🟢", "SHORT": "🔴"}.get(res.get("direction",""), "⚪")
+                    dir_text  = {"LONG": "做多 ▲", "SHORT": "做空 ▼"}.get(res.get("direction",""), "觀望")
+                    score     = res.get("score", 0)
+                    conf      = "高 🔥" if score >= 80 else "中 ✅" if score >= 65 else "低 ⚠️"
+                    now_str   = datetime.now(taipei).strftime("%H:%M")
+                    import html as _html
+                    summary   = _html.escape(res.get("summary",""))
+                    reason    = _html.escape(res.get("reason",""))
+                    risk      = _html.escape(res.get("risk_note","嚴控倉位，設好止損"))
+                    entry = res.get("entry_zone",""); sl = res.get("stop_loss","")
+                    t1 = res.get("target_1",""); t2 = res.get("target_2","")
+                    tf = res.get("timeframe","4-8小時")
+                    lines = [
+                        f"{dir_emoji} <b>{coin}/USDT 深度分析</b>",
+                        f"方向: {dir_text}  信心: {conf}  分數: {score}/100",
+                        f"\n📌 {summary}" if summary else "",
+                        f"<i>{reason}</i>" if reason else "",
+                        f"\n🎯 入場: {entry}\n🔴 止損: {sl}\n✅ 目標1: {t1}\n🏆 目標2: {t2}" if entry else "",
+                        f"⏱ 持倉: {tf}\n⚠️ {risk}",
+                        f"\n⏰ {now_str}"
+                    ]
+                    _tg_send(chat_id, "\n".join(l for l in lines if l))
+                else:
+                    _tg_send(chat_id, f"❌ 分析失敗，請稍後再試 (HTTP {r.status_code})")
+            except Exception as e:
+                _tg_send(chat_id, f"❌ 分析錯誤: {e}")
+
+        elif action.startswith("pause:"):
+            hours = float(action.split(":",1)[1])
+            requests.post(f"{WEB_BASE_URL}/api/push_control",
+                json={"action": "pause", "hours": hours}, timeout=8)
+            until = datetime.now(taipei) + __import__("datetime").timedelta(hours=hours)
+            _tg_send(chat_id, f"⏸ 已暫停推送 {int(hours)} 小時（到 {until.strftime('%H:%M')}）\n\n發 /resume 可立即恢復")
+
+        elif action == "resume":
+            requests.post(f"{WEB_BASE_URL}/api/push_control",
+                json={"action": "resume"}, timeout=8)
+            _tg_send(chat_id, "▶️ 已恢復推送訊號")
+
+        return jsonify({"ok": True})
+
+    # ── 處理文字指令 ──
+    msg = data.get("message", {})
+    text = (msg.get("text") or "").strip()
+    chat_id = str(msg.get("chat", {}).get("id", "") or CHAT_ID)
+
+    if text == "/status":
+        r = requests.get(f"{WEB_BASE_URL}/api/push_control", timeout=8)
+        d = r.json() if r.ok else {}
+        status = "🟢 推送中" if d.get("should_push") else f"⏸ {d.get('message','暫停中')}"
+        _tg_send(chat_id,
+            f"📊 <b>LANA 推送狀態</b>\n\n{status}\n\n"
+            f"指令：\n/pause [小時] — 暫停\n/resume — 恢復\n/status — 查狀態",
+            reply_markup={"inline_keyboard": [[
+                {"text": "▶️ 恢復推送", "callback_data": "resume"},
+                {"text": "⏸ 暫停4小時", "callback_data": "pause:4"}
+            ]]}
+        )
+    elif text.startswith("/pause"):
+        parts = text.split(); hours = 4
+        if len(parts) > 1:
+            try: hours = float(parts[1])
+            except: pass
+        requests.post(f"{WEB_BASE_URL}/api/push_control",
+            json={"action": "pause", "hours": hours}, timeout=8)
+        until = datetime.now(taipei) + __import__("datetime").timedelta(hours=hours)
+        _tg_send(chat_id, f"⏸ 已暫停推送 {int(hours)} 小時（到 {until.strftime('%H:%M')}）\n\n發 /resume 可立即恢復")
+    elif text == "/resume":
+        requests.post(f"{WEB_BASE_URL}/api/push_control",
+            json={"action": "resume"}, timeout=8)
+        _tg_send(chat_id, "▶️ 已恢復推送訊號")
+
+    return jsonify({"ok": True})
+
+@app.route("/telegram/set_webhook", methods=["GET"])
+def set_webhook():
+    """一次性設定 TG Webhook，瀏覽器打開這個 URL 就能完成設定"""
+    webhook_url = f"{WEB_BASE_URL}/telegram/webhook"
+    r = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook",
+        json={"url": webhook_url, "allowed_updates": ["message", "callback_query"]},
+        timeout=10
+    )
+    return jsonify({"webhook_url": webhook_url, "tg_response": r.json()})
 
 
 @app.route("/api/push_control", methods=["GET", "POST"])
