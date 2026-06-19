@@ -1945,6 +1945,19 @@ def telegram_webhook():
                 json={"action": "resume"}, timeout=8)
             _tg_send(chat_id, "▶️ 已恢復推送訊號")
 
+        elif action == "status":
+            r = requests.get(f"{WEB_BASE_URL}/api/push_control", timeout=8)
+            d = r.json() if r.ok else {}
+            status = "🟢 推送中" if d.get("should_push") else f"⏸ {d.get('message','暫停中')}"
+            _tg_send(chat_id, f"📊 <b>LANA 推送狀態</b>\n\n{status}",
+                reply_markup={"inline_keyboard": [
+                    [{"text": "⏸ 暫停4小時", "callback_data": "pause:4"},
+                     {"text": "⏸ 暫停8小時", "callback_data": "pause:8"}],
+                    [{"text": "⏸ 永久暫停", "callback_data": "pause:0"},
+                     {"text": "▶️ 恢復推送", "callback_data": "resume"}]
+                ]}
+            )
+
         return jsonify({"ok": True})
 
     # ── 處理文字指令 ──
