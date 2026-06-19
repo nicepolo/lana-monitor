@@ -27,6 +27,12 @@ logging.basicConfig(level=logging.INFO)
 _ai_analyze_cache = {}   # {coin: {"ts": float, "result": dict}}
 AI_ANALYZE_COOLDOWN_SEC = 4 * 3600
 
+# 推送控制狀態（伺服器端持久，跨 cron 容器）
+_push_control = {
+    "paused": False,       # 手動暫停
+    "pause_until": None,   # 暫停到幾點（float timestamp），None = 永久暫停直到 /resume
+}
+
 # ── 設定（Railway 環境變數優先，fallback 到預設值）──────────────
 NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJcWtwWEYrQJXfG6OtCf9HaE")
@@ -1832,6 +1838,59 @@ def api_meme_signals():
     })
     resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
+
+
+@app.route("/api/push_control", methods=["GET", "POST"])
+def api_push_control():
+    """推送開關控制 — GET: 查詢目前狀態; POST: 設定暫停/恢復"""
+    global _push_control
+    now_ts = time.time()
+    taipei = timezone(timedelta(hours=8))
+
+    if request.method == "GET":
+        # 暫停到期自動恢復
+        if _push_control["paused"] and _push_control["pause_until"] and now_ts >= _push_control["pause_until"]:
+            _push_control["paused"] = False
+            _push_control["pause_until"] = None
+
+        # 靜默時段判斷（02:00–07:00 台灣時間）
+        now_tw = datetime.now(taipei)
+        quiet = 2 <= now_tw.hour < 7
+        paused = _push_control["paused"]
+
+        until_str = ""
+        if paused and _push_control["pause_until"]:
+            until_str = datetime.fromtimestamp(_push_control["pause_until"], taipei).strftime("%H:%M")
+
+        return jsonify({
+            "should_push": not paused and not quiet,
+            "paused": paused,
+            "quiet_hours": quiet,
+            "pause_until": until_str,
+            "message": (
+                f"靜默時段（02:00-07:00）" if quiet and not paused else
+                f"手動暫停中（到 {until_str}）" if paused and until_str else
+                "手動暫停中（直到 /resume）" if paused else
+                "推送中"
+            )
+        })
+
+    # POST: 設定暫停/恢復
+    body = request.get_json(force=True, silent=True) or {}
+    action = body.get("action", "")
+    hours  = float(body.get("hours", 0))
+
+    if action == "pause":
+        _push_control["paused"] = True
+        _push_control["pause_until"] = (now_ts + hours * 3600) if hours > 0 else None
+        until_str = datetime.fromtimestamp(_push_control["pause_until"], taipei).strftime("%H:%M") if _push_control["pause_until"] else "手動恢復為止"
+        return jsonify({"ok": True, "message": f"已暫停推送（到 {until_str}）"})
+    elif action == "resume":
+        _push_control["paused"] = False
+        _push_control["pause_until"] = None
+        return jsonify({"ok": True, "message": "已恢復推送"})
+    else:
+        return jsonify({"ok": False, "error": "action 需為 pause 或 resume"}), 400
 
 
 @app.route("/health")
