@@ -1837,8 +1837,9 @@ def telegram_webhook():
 
             elif action.startswith("pause:"):
                 hours = float(action.split(":",1)[1])
-                requests.post(f"{WEB_BASE_URL}/api/push_control",
-                    json={"action": "pause", "hours": hours}, timeout=8)
+                # 直接操作狀態，不打 HTTP（避免 gunicorn deadlock）
+                _push_control["paused"] = True
+                _push_control["pause_until"] = (time.time() + hours * 3600) if hours > 0 else None
                 if hours == 0:
                     _tg_send(chat_id, "⏸ 已永久暫停推送",
                         reply_markup={"inline_keyboard": [[
@@ -1853,18 +1854,29 @@ def telegram_webhook():
                             {"text": "📊 查看狀態", "callback_data": "status"}]]})
 
             elif action == "resume":
-                requests.post(f"{WEB_BASE_URL}/api/push_control",
-                    json={"action": "resume"}, timeout=8)
+                # 直接操作狀態，不打 HTTP
+                _push_control["paused"] = False
+                _push_control["pause_until"] = None
                 _tg_send(chat_id, "▶️ 已恢復推送訊號 🟢",
                     reply_markup={"inline_keyboard": [[
                         {"text": "📊 確認狀態", "callback_data": "status"},
                         {"text": "⏸ 暫停4小時", "callback_data": "pause:4"}]]})
 
             elif action == "status":
-                r = requests.get(f"{WEB_BASE_URL}/api/push_control", timeout=8)
-                d = r.json() if r.ok else {}
-                status = "🟢 推送中" if d.get("should_push") else f"⏸ {d.get('message','暫停中')}"
-                _tg_send(chat_id, f"📊 <b>LANA 推送狀態</b>\n\n{status}",
+                # 直接讀取狀態，不打 HTTP
+                now_ts_s = time.time()
+                if _push_control["paused"] and _push_control["pause_until"] and now_ts_s >= _push_control["pause_until"]:
+                    _push_control["paused"] = False
+                    _push_control["pause_until"] = None
+                paused = _push_control["paused"]
+                if paused and _push_control["pause_until"]:
+                    until_str = datetime.fromtimestamp(_push_control["pause_until"], taipei).strftime("%H:%M")
+                    status_text = f"⏸ 手動暫停中（到 {until_str}）"
+                elif paused:
+                    status_text = "⏸ 手動暫停中（永久）"
+                else:
+                    status_text = "🟢 推送中"
+                _tg_send(chat_id, f"📊 <b>LANA 推送狀態</b>\n\n{status_text}",
                     reply_markup={"inline_keyboard": [
                         [{"text": "⏸ 暫停4小時", "callback_data": "pause:4"},
                          {"text": "⏸ 暫停8小時", "callback_data": "pause:8"}],
