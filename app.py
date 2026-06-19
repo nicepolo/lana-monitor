@@ -1543,7 +1543,6 @@ def api_entry_index_telegram():
 
 
 
-@app.route("/api/ai_analyze", methods=["POST", "OPTIONS"])
 def _do_ai_analyze(coin, price=0, change24h=0):
     """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
     now_ts = time.time()
@@ -1693,6 +1692,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     return result
 
 
+@app.route("/api/ai_analyze", methods=["POST", "OPTIONS"])
 def api_ai_analyze():
     # CORS
     if request.method == "OPTIONS":
