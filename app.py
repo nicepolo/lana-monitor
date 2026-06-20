@@ -1561,9 +1561,10 @@ def _do_ai_analyze(coin, price=0, change24h=0):
         ma_bull = d.get("ma_bull", False)
         bb_pos  = d.get("bb_position", "middle")
         price   = price or d.get("price", 0)
+        lana_score = d.get("lana_score", 0) or 0
     except Exception:
         rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; bb_pos = "middle"; d = {}
-
+        lana_score = 0
     trend = "up" if ma_bull else "neutral"
     sl_long  = round(price * 0.97, 6) if price else 0
     t1_long  = round(price * 1.04, 6) if price else 0
@@ -1689,6 +1690,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
             result["target_2"]   = fix(result.get("target_2"), t2_long)
 
     _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
+    result["lana_score"] = lana_score
     return result
 
 
@@ -1813,14 +1815,32 @@ def telegram_webhook():
                     res = _do_ai_analyze(coin)
                     if res:
                         import html as _html
-                        dir_emoji = {"LONG": "🟢", "SHORT": "🔴"}.get(res.get("direction",""), "⚪")
-                        dir_text  = {"LONG": "做多 ▲", "SHORT": "做空 ▼"}.get(res.get("direction",""), "觀望")
+                        direction = res.get("direction", "WATCH")
+                        dir_emoji = {"LONG": "🟢", "SHORT": "🔴"}.get(direction, "⚪")
+                        dir_text  = {"LONG": "做多 ▲", "SHORT": "做空 ▼"}.get(direction, "觀望")
                         score = res.get("score", 0)
                         conf  = "高 🔥" if score >= 80 else "中 ✅" if score >= 65 else "低 ⚠️"
                         entry = res.get("entry_zone",""); sl = res.get("stop_loss","")
                         t1 = res.get("target_1",""); t2 = res.get("target_2","")
+
+                        # 綜合判定橫幅（跟網頁版一致）
+                        lana_score = res.get("lana_score", 0)
+                        if direction == "LONG" and lana_score >= 55:
+                            verdict = "🟢 可考慮進場 — AI與技術指標雙重確認看多"
+                        elif direction == "SHORT" and lana_score >= 55:
+                            verdict = "🟢 可考慮進場 — AI與技術指標雙重確認看空"
+                        elif direction == "LONG" and lana_score < 55:
+                            verdict = f"🟡 AI單方面看多，需謹慎 — 技術分偏低（{lana_score}分），建議小倉或再觀察"
+                        elif direction == "SHORT" and lana_score < 55:
+                            verdict = f"🟡 AI單方面看空，需謹慎 — 技術分偏低（{lana_score}分），建議小倉或再觀察"
+                        elif direction == "WATCH":
+                            verdict = "🔴 不建議進場 — AI建議觀望"
+                        else:
+                            verdict = "⚪ 訊號不明確，先觀望"
+
                         lines = [
                             f"{dir_emoji} <b>{coin}/USDT 深度分析</b>",
+                            f"\n{verdict}\n",
                             f"方向: {dir_text}  信心: {conf}  AI分數: {score}/100",
                             f"\n📌 {_html.escape(str(res.get('summary','')))}" if res.get("summary") else "",
                             f"<i>{_html.escape(str(res.get('reason','')))}</i>" if res.get("reason") else "",
