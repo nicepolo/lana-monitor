@@ -1635,8 +1635,13 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                     text = "".join(p.get("text", "") for p in parts)
                     text = text.strip().replace("```json","").replace("```","").strip()
                     if text:
-                        result = json.loads(text)
-                        result["model"] = "gemini-2.0-flash"
+                        try:
+                            # 用 raw_decode 只取第一個完整 JSON，忽略後面多餘的資料
+                            obj, _ = json.JSONDecoder().raw_decode(text)
+                            result = obj
+                            result["model"] = "gemini-2.0-flash"
+                        except Exception as je:
+                            print(f"[Gemini] JSON解析失敗 {coin}: {je} | text={text[:100]}")
                     else:
                         print(f"[Gemini] 回傳空白 {coin}: finishReason={cands[0].get('finishReason')}")
                 else:
