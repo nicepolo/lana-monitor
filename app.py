@@ -1623,7 +1623,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048,
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
                                            "responseMimeType": "application/json"}},
                 timeout=25
             )
@@ -1631,28 +1631,22 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 jr = r.json()
                 cands = jr.get("candidates", [])
                 if cands:
-                    fr = cands[0].get("finishReason", "")
                     parts = cands[0].get("content", {}).get("parts", [])
                     text = "".join(p.get("text", "") for p in parts)
                     text = text.strip().replace("```json","").replace("```","").strip()
                     if text:
-                        try:
-                            result = json.loads(text)
-                            result["model"] = "gemini-2.0-flash"
-                        except Exception as je:
-                            print(f"[Gemini] JSON解析失敗 {coin}: finishReason={fr}, text前100={text[:100]}")
+                        result = json.loads(text)
+                        result["model"] = "gemini-2.0-flash"
                     else:
-                        print(f"[Gemini] 空回應 {coin}: finishReason={fr}")
+                        print(f"[Gemini] 回傳空白 {coin}: finishReason={cands[0].get('finishReason')}")
                 else:
-                    print(f"[Gemini] 無candidates {coin}: {str(jr)[:200]}")
+                    print(f"[Gemini] 無candidates {coin}: {jr}")
             else:
-                print(f"[Gemini] HTTP {r.status_code} {coin}: {r.text[:200]}")
+                print(f"[Gemini] HTTP {r.status_code} {coin}: {r.text[:300]}")
         except Exception as e:
             print(f"[Gemini] 例外 {coin}: {e}")
 
-    # Gemini 失敗時改用「規則式評分」，不打 Claude（省 token）
-    # 如需 Claude 備援，設環境變數 ENABLE_CLAUDE_FALLBACK=1
-    if not result and anthropic_key and os.getenv("ENABLE_CLAUDE_FALLBACK", "") == "1":
+    if not result and anthropic_key:
         try:
             r = requests.post(
                 "https://api.anthropic.com/v1/messages",
@@ -1667,25 +1661,16 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 text = text.strip().replace("```json","").replace("```","").strip()
                 result = json.loads(text)
                 result["model"] = "claude-haiku"
-        except Exception:
-            pass
+            else:
+                print(f"[Claude] HTTP {r.status_code} {coin}: {r.text[:300]}")
+        except Exception as e:
+            print(f"[Claude] 例外 {coin}: {e}")
 
-    # 規則式備援（Gemini 失敗且未啟用 Claude 時）：用 LANA 技術分推方向
     if not result:
-        _dir = "WATCH"
-        if lana_score >= 60 and ma_bull and change24h > 0:
-            _dir = "LONG"
-        elif lana_score >= 60 and not ma_bull and change24h < 0:
-            _dir = "SHORT"
-        result = {"direction": _dir, "score": int(lana_score), "model": "rules",
-                  "confidence": "中" if lana_score >= 60 else "低",
-                  "summary": f"規則式評分（AI暫不可用）：LANA {int(lana_score)}分",
-                  "reason": f"RSI={rsi_1h:.0f}, 量比={vol_r:.1f}x, 趨勢={'多頭' if ma_bull else '中性/空頭'}",
-                  "entry_zone": round(price, 6) if price else 0,
-                  "stop_loss": sl_long if _dir=="LONG" else (sl_short if _dir=="SHORT" else 0),
-                  "target_1": t1_long if _dir=="LONG" else (t1_short if _dir=="SHORT" else 0),
-                  "target_2": t2_long if _dir=="LONG" else (t2_short if _dir=="SHORT" else 0),
-                  "timeframe": "4-8小時", "risk_note": "此為規則式評分，建議自行確認"}
+        result = {"direction": "WATCH", "score": 50, "model": "rules",
+                  "summary": "AI分析暫時無法使用", "reason": "",
+                  "entry_zone": 0, "stop_loss": 0, "target_1": 0, "target_2": 0,
+                  "timeframe": "N/A", "risk_note": "請稍後再試"}
 
     # 修正進出場數字合理性
     def fix(v, default):
