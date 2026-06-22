@@ -1547,10 +1547,15 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
     now_ts = time.time()
 
-    # 冷卻檢查
+    # 冷卻檢查（4小時內同一顆幣不重複打AI）
+    # 例外：若當前價格跟快取時的價格相差超過5%，視為行情已大幅變化，強制重新分析
     cached = _ai_analyze_cache.get(coin)
     if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
-        return cached["result"]
+        cached_price = cached["result"].get("_price_at_analysis", 0)
+        if price and cached_price and abs(price - cached_price) / cached_price > 0.05:
+            print(f"[AI] {coin} 價格變動>{5}%（分析時:{cached_price:.6f}→現在:{price:.6f}），強制重新分析")
+        else:
+            return cached["result"]
 
     # 取技術指標
     try:
@@ -1704,6 +1709,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
 
     _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
     result["lana_score"] = lana_score
+    result["_price_at_analysis"] = price  # 記錄分析時的價格，供快取有效性判斷
     return result
 
 
@@ -1819,10 +1825,17 @@ def telegram_webhook():
             log.info(f"[webhook] callback action={action}")
             _tg_answer_callback(cq_id, "處理中...")
 
-            if action.startswith("analyze:"):
+            if action.startswith("analyze:") or action.startswith("reanalyze:"):
+                force = action.startswith("reanalyze:")
                 coin = action.split(":", 1)[1]
-                _tg_edit_message(chat_id, msg_id,
-                    cq["message"].get("text", "") + "\n\n⏳ 正在進行深度分析，約30秒...")
+                if force:
+                    # 清除快取，強制重新分析
+                    _ai_analyze_cache.pop(coin, None)
+                    _tg_edit_message(chat_id, msg_id,
+                        cq["message"].get("text", "") + "\n\n🔄 強制重新分析中（忽略快取），約30秒...")
+                else:
+                    _tg_edit_message(chat_id, msg_id,
+                        cq["message"].get("text", "") + "\n\n⏳ 正在進行深度分析，約30秒...")
                 try:
                     # 直接呼叫函式，不打 HTTP 自己（避免 gunicorn single-worker deadlock）
                     res = _do_ai_analyze(coin)
