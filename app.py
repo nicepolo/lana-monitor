@@ -530,6 +530,16 @@ def fetch_market_scan():
     候選清單再交給 /api/scan 算 LANA 分（stage2），避免對全市場逐一跑 K 線造成 timeout。"""
     try:
         import requests as _rq
+
+        # 先抓合約狀態，過濾掉即將下架（state != live）的合約
+        inst_r = _rq.get("https://www.okx.com/api/v5/public/instruments",
+                         params={"instType": "SWAP"}, timeout=15)
+        live_set = set()
+        if inst_r.ok:
+            for inst in inst_r.json().get("data", []):
+                if inst.get("state") == "live" and inst.get("instId", "").endswith("-USDT-SWAP"):
+                    live_set.add(inst["instId"])
+
         r = _rq.get("https://www.okx.com/api/v5/market/tickers",
                     params={"instType": "SWAP"}, timeout=15)
         r.raise_for_status()
@@ -539,9 +549,14 @@ def fetch_market_scan():
         return []
 
     results = []
+    filtered_delisted = 0
     for t in data:
         inst = t.get("instId", "")
         if not inst.endswith("-USDT-SWAP"):
+            continue
+        # 過濾即將下架的合約
+        if live_set and inst not in live_set:
+            filtered_delisted += 1
             continue
         coin = inst.replace("-USDT-SWAP", "")
         if coin in STABLECOINS or coin in WRAPPED:
@@ -557,6 +572,9 @@ def fetch_market_scan():
         chg = (last / open24 - 1) * 100
         results.append({"coin": coin, "price": last,
                         "change": round(chg, 2), "volume": round(vol)})
+
+    if filtered_delisted:
+        log.info(f"過濾即將下架合約: {filtered_delisted} 個")
 
     # 去重（同一幣只留第一筆）
     seen = set()
