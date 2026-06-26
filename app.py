@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 
 # AI 分析冷卻快取（伺服器記憶體，跨請求持續存在；cron 端每次都是全新容器，無法自行記憶冷卻）
 _ai_analyze_cache = {}   # {coin: {"ts": float, "result": dict}}
-AI_ANALYZE_COOLDOWN_SEC = 4 * 3600
+AI_ANALYZE_COOLDOWN_SEC = 1 * 3600  # 1小時快取，減少過期結果
 
 # 推送控制狀態（伺服器端持久，跨 cron 容器）
 _push_control = {
