@@ -1,8 +1,13 @@
-__pycache__/
-*.pyc
-*.pyo
 .env
+__pycache__/
+*.py[cod]
 *.egg-info/
 dist/
 build/
 .DS_Store
+.pytest_cache/
+paper_trading.json
+backtest_data.json
+risk_data.json
+trade_journal.json
+watchlist.json

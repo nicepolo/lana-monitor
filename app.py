@@ -9,9 +9,19 @@ import math
 import os
 import json
 import uuid
+import threading
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from lana_strategy import arbitrate_ai_result, build_trade_levels, score_direction
+from paper_trading import (
+    book_summary,
+    load_book as load_paper_book,
+    mark_positions,
+    record_and_open as record_and_open_paper,
+    save_book as save_paper_book,
+)
 
 # ── Meme Signals Cache ──
 _meme_cache = {"results": [], "ts": ""}
@@ -23,8 +33,8 @@ import logging, time
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# AI 分析冷卻快取（伺服器記憶體，跨請求持續存在；cron 端每次都是全新容器，無法自行記憶冷卻）
-_ai_analyze_cache = {}   # {coin: {"ts": float, "result": dict}}
+# AI 分析冷卻快取（以固定市場快照的 signal_id 為鍵，避免同 K 線方向漂移）
+_ai_analyze_cache = {}   # {signal_id: {"coin": str, "ts": float, "result": dict}}
 AI_ANALYZE_COOLDOWN_SEC = 1 * 3600  # 1小時快取，減少過期結果
 
 # 推送控制狀態（伺服器端持久，跨 cron 容器）
@@ -37,8 +47,8 @@ _push_control = {
 NOTIFY_TO        = os.environ.get("NOTIFY_TO",        "nicepolo1222@gmail.com")
 WEB_BASE_URL = os.environ.get("WEB_BASE_URL", "https://web-production-7cdf9.up.railway.app")
 
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "8477541527:AAGK7ZEdgXpIJcWtwWEYrQJXfG6OtCf9HaE")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "405822104")
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN",   "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 PORT             = int(os.environ.get("PORT", 5000))
 
 # ── 存檔路徑（Railway Volume 掛載在 /data/）──────────────────────
@@ -46,6 +56,31 @@ WATCHLIST_FILE  = '/data/watchlist.json'
 JOURNAL_FILE    = '/data/trade_journal.json'
 RISK_DATA_FILE   = '/data/risk_data.json'
 BACKTEST_FILE    = '/data/backtest_data.json'
+PAPER_FILE       = '/data/paper_trading.json'
+PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+PAPER_SETTINGS = {
+    "capital": float(os.environ.get("PAPER_CAPITAL", "10000")),
+    "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "0.5")),
+    "min_signal_score": int(os.environ.get("PAPER_MIN_SIGNAL_SCORE", "70")),
+    "max_open_positions": int(os.environ.get("PAPER_MAX_OPEN_POSITIONS", "3")),
+    "leverage": float(os.environ.get("PAPER_LEVERAGE", "3")),
+    "fee_rate": float(os.environ.get("PAPER_FEE_RATE", "0.0005")),
+    "slippage_rate": float(os.environ.get("PAPER_SLIPPAGE_RATE", "0.0005")),
+    "trailing_pct": float(os.environ.get("PAPER_TRAILING_PCT", "0.02")),
+    "max_hold_hours": float(os.environ.get("PAPER_MAX_HOLD_HOURS", "24")),
+}
+
+
+def _paper_paths():
+    return [PAPER_FILE, os.path.join(os.path.dirname(__file__), 'paper_trading.json')]
+
+
+def _load_paper():
+    return load_paper_book(_paper_paths(), PAPER_SETTINGS)
+
+
+def _save_paper(book):
+    return save_paper_book(book, _paper_paths())
 
 SECTORS = {
     'DOGE':'迷因','SHIB':'迷因','PEPE':'迷因','WIF':'迷因','BONK':'迷因',
@@ -313,6 +348,21 @@ def bollinger(closes, n=20, k=2):
     std = math.sqrt(sum((x - mid)**2 for x in sl) / n)
     return round(mid + k*std, 6), round(mid, 6), round(mid - k*std, 6)
 
+def atr(klines, n=14):
+    """Average True Range calculated only from completed candles."""
+    if len(klines) < n + 1:
+        return None
+    true_ranges = []
+    for idx in range(len(klines) - n, len(klines)):
+        current = klines[idx]
+        previous_close = klines[idx - 1]["c"]
+        true_ranges.append(max(
+            current["h"] - current["l"],
+            abs(current["h"] - previous_close),
+            abs(current["l"] - previous_close),
+        ))
+    return round(sum(true_ranges) / len(true_ranges), 10)
+
 def vol_ratio(volumes):
     """現量 / 過去20根均量（與 meme_scanner 定義一致）"""
     if len(volumes) < 21:
@@ -420,8 +470,9 @@ def _fetch_klines_okx(symbol, interval="1D", limit=150):
             )
             data = r.json().get("data", [])
             if data:
-                return [{"o": float(k[1]), "h": float(k[2]),
-                         "l": float(k[3]), "c": float(k[4]), "v": float(k[5])}
+                return [{"ts": int(k[0]), "o": float(k[1]), "h": float(k[2]),
+                         "l": float(k[3]), "c": float(k[4]), "v": float(k[5]),
+                         "confirmed": len(k) < 9 or str(k[8]) == "1"}
                         for k in reversed(data)]
     except Exception as e:
         log.warning(f"OKX klines 失敗 {symbol}: {e}")
@@ -436,8 +487,10 @@ def fetch_klines(symbol, interval="1d", limit=150):
     try:
         r = _get(f"{BINANCE_BASE}/api/v3/klines",
                  params={"symbol": symbol, "interval": interval, "limit": limit})
-        return [{"o": float(d[1]), "h": float(d[2]),
-                 "l": float(d[3]), "c": float(d[4]), "v": float(d[5])}
+        now_ms = int(time.time() * 1000)
+        return [{"ts": int(d[0]), "o": float(d[1]), "h": float(d[2]),
+                 "l": float(d[3]), "c": float(d[4]), "v": float(d[5]),
+                 "confirmed": int(d[6]) <= now_ms}
                 for d in r.json()]
     except:
         return []
@@ -591,7 +644,11 @@ def fetch_market_scan():
 # ── 深度分析 ────────────────────────────────────────────────
 def analyze_coin(coin):
     symbol = coin.upper() + "USDT"
-    klines  = fetch_klines(symbol, "1h", 150)  # 改用1H K線，與TG推送/土狗一致
+    raw_klines = fetch_klines(symbol, "1h", 150)
+    # 交易決策只採用已收盤 K 線，避免同一根 K 線內方向反覆。
+    klines = [k for k in raw_klines if k.get("confirmed", True)]
+    if len(klines) < 30:
+        raise ValueError(f"{coin} 已收盤 K 線不足")
     ticker  = fetch_ticker(symbol)
     closes  = [k["c"] for k in klines]
     volumes = [k["v"] for k in klines]
@@ -603,6 +660,7 @@ def analyze_coin(coin):
     r14  = rsi(closes)
     bb_up, bb_mid, bb_lo = bollinger(closes)
     vr   = vol_ratio(volumes)
+    atr14 = atr(klines)
     funding  = fetch_funding(symbol)
     gl_ls    = fetch_global_ls(symbol)
     top_ls   = fetch_top_trader_ls(symbol)
@@ -643,8 +701,21 @@ def analyze_coin(coin):
     }
     # high20: 近20根K線高點（突破偵測用）
     _high20 = max([k["h"] for k in klines[-20:]]) if len(klines) >= 20 else None
+    _low20 = min([k["l"] for k in klines[-20:]]) if len(klines) >= 20 else None
     ls = calc_lana_score(ma7, ma30, ma120, r14, vr, bb_pos, risks, contract=contract_ctx,
                          price=price, high20=_high20, change_24h=c24h)
+    candle_open_ts = klines[-1].get("ts")
+    candle_close_ts = (int(candle_open_ts) + 3600_000) if candle_open_ts else None
+    strategy_features = {
+        "coin": coin.upper(), "timeframe": "1h", "candle_close_ts": candle_close_ts,
+        "price": price, "change_24h": c24h,
+        "ma7": ma7, "ma30": ma30, "ma120": ma120,
+        "rsi": r14, "vol_ratio": vr, "bb_position": bb_pos,
+        "funding_rate": funding * 100 if funding is not None else None,
+        "oi_change_24h": oi_data['oi_change_24h'] if oi_data else None,
+        "atr": atr14, "recent_high": _high20, "recent_low": _low20,
+    }
+    direction_decision = score_direction(strategy_features)
     ls_grade = ("💎 極強" if ls["total"] >= 80 else
                 "🟢 強"   if ls["total"] >= 65 else
                 "🟡 普通" if ls["total"] >= 50 else
@@ -665,6 +736,7 @@ def analyze_coin(coin):
         "ma30": ma30,
         "ma120": ma120,
         "ma_bull": bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120),
+        "ma_bear": bool(ma7 and ma30 and ma120 and ma7 < ma30 < ma120),
         "rsi": r14,
         "bb_upper": bb_up,
         "bb_mid": bb_mid,
@@ -676,6 +748,19 @@ def analyze_coin(coin):
         "top_ls":          round(top_ls, 3)  if top_ls  else None,
         "oi":              oi_data['oi']           if oi_data else None,
         "oi_change_24h":   oi_data['oi_change_24h'] if oi_data else None,
+        "atr": atr14,
+        "recent_high": _high20,
+        "recent_low": _low20,
+        "candle_close_ts": candle_close_ts,
+        "rule_direction": direction_decision["direction"],
+        "long_score": direction_decision["long_score"],
+        "short_score": direction_decision["short_score"],
+        "direction_score": direction_decision["selected_score"],
+        "score_gap": direction_decision["score_gap"],
+        "signal_id": direction_decision["signal_id"],
+        "feature_hash": direction_decision["feature_hash"],
+        "strategy_version": direction_decision["strategy_version"],
+        "direction_reason": direction_decision.get("veto_reason") or "、".join(direction_decision.get("reasons", [])),
         "early_ambush":    ls.get("early_ambush", False),
         "risks": risks,
         "risk_level": risk_level,
@@ -865,9 +950,9 @@ def _quick_score_one(coin):
     """用 klines 快速算 LANA 分數（不含 futures），供掃描列表用"""
     try:
         symbol = coin.upper() + "USDT"
-        klines  = fetch_klines(symbol)
+        klines  = [k for k in fetch_klines(symbol, "1h", 150) if k.get("confirmed", True)]
         if not klines:
-            return coin, None, None
+            return coin, None, None, None, None, False, "", "WATCH", 0, 0, None
         closes  = [k["c"] for k in klines]
         volumes = [k["v"] for k in klines]
         ma7  = ma(closes, 7)
@@ -899,9 +984,24 @@ def _quick_score_one(coin):
         grade = ("💎 極強" if score >= 80 else "🟢 強" if score >= 65 else
                  "🟡 普通" if score >= 50 else "🟠 弱" if score >= 35 else "🔴 危險")
         ma_bull = bool(ma7 and ma30 and ma120 and ma7 > ma30 > ma120)
-        return coin, score, grade, round(r14, 1) if r14 else None, round(vr, 2) if vr else None, ma_bull, bb_pos
+        candle_open_ts = klines[-1].get("ts")
+        decision = score_direction({
+            "coin": coin.upper(), "timeframe": "1h",
+            "candle_close_ts": int(candle_open_ts) + 3600_000 if candle_open_ts else None,
+            "price": price_now, "change_24h": change_24h,
+            "ma7": ma7, "ma30": ma30, "ma120": ma120,
+            "rsi": r14, "vol_ratio": vr, "bb_position": bb_pos,
+            "funding_rate": None, "oi_change_24h": None,
+            "atr": atr(klines),
+            "recent_high": high20,
+            "recent_low": min(k["l"] for k in klines[-20:]) if len(klines) >= 20 else None,
+        })
+        return (coin, score, grade, round(r14, 1) if r14 else None,
+                round(vr, 2) if vr else None, ma_bull, bb_pos,
+                decision["direction"], decision["long_score"], decision["short_score"],
+                decision["signal_id"])
     except Exception:
-        return coin, None, None, None, None, False, ""
+        return coin, None, None, None, None, False, "", "WATCH", 0, 0, None
 
 
 @app.route("/api/scan", methods=["GET", "POST"])
@@ -926,12 +1026,16 @@ def api_scan():
         all_coins = [d['coin'] for d in data]
         score_map = {}
         with ThreadPoolExecutor(max_workers=8) as ex:
-            for coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos in ex.map(_quick_score_one, all_coins):
+            for (coin, score, grade, rsi_val, vr_val, ma_bull, bb_pos,
+                 rule_direction, long_score, short_score, signal_id) in ex.map(_quick_score_one, all_coins):
                 if score is not None:
                     score_map[coin] = {
                         "lana_score": score, "lana_grade": grade,
                         "rsi": rsi_val, "vol_ratio": vr_val,
-                        "ma_bull": ma_bull, "bb_position": bb_pos
+                        "ma_bull": ma_bull, "bb_position": bb_pos,
+                        "rule_direction": rule_direction,
+                        "long_score": long_score, "short_score": short_score,
+                        "signal_id": signal_id,
                     }
         for d in data:
             if d['coin'] in score_map:
@@ -1135,6 +1239,9 @@ def api_backtest_snapshot():
         'change_24h': d['change_24h'], 'volume_24h': d['volume_24h'],
         'rsi': d['rsi'], 'ma_bull': d['ma_bull'],
         'vol_ratio': d['vol_ratio'], 'bb_position': d.get('bb_position'),
+        'direction': d.get('rule_direction', 'WATCH'),
+        'long_score': d.get('long_score'), 'short_score': d.get('short_score'),
+        'signal_id': d.get('signal_id'), 'strategy_version': d.get('strategy_version'),
         'sector': get_sector(d['coin']), 'ts': datetime.now().isoformat()
     } for d in analyzed[:20]]
 
@@ -1163,8 +1270,13 @@ def api_backtest_validate():
             try:
                 ticker    = fetch_ticker(entry['coin'] + 'USDT')
                 price_now = float(ticker.get('lastPrice', 0))
-                pnl       = round((price_now / entry['price'] - 1) * 100, 2) if entry.get('price') else None
-                day_res.append({**entry, 'price_24h': price_now, 'pnl_pct': pnl,
+                market_move = round((price_now / entry['price'] - 1) * 100, 2) if entry.get('price') else None
+                # 舊版快照沒有 direction；只有原本的 ma_bull 訊號可安全視為 LONG。
+                direction = entry.get('direction') or ('LONG' if entry.get('ma_bull') else 'WATCH')
+                pnl = (market_move if direction == 'LONG' else
+                       -market_move if direction == 'SHORT' else None)
+                day_res.append({**entry, 'price_24h': price_now,
+                                 'market_move_pct': market_move, 'pnl_pct': pnl,
                                  'validated_at': now.isoformat()})
                 updated += 1
             except: pass
@@ -1565,16 +1677,6 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
     now_ts = time.time()
 
-    # 冷卻檢查（4小時內同一顆幣不重複打AI）
-    # 例外：若當前價格跟快取時的價格相差超過5%，視為行情已大幅變化，強制重新分析
-    cached = _ai_analyze_cache.get(coin)
-    if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
-        cached_price = cached["result"].get("_price_at_analysis", 0)
-        if price and cached_price and abs(price - cached_price) / cached_price > 0.05:
-            print(f"[AI] {coin} 價格變動>{5}%（分析時:{cached_price:.6f}→現在:{price:.6f}），強制重新分析")
-        else:
-            return cached["result"]
-
     # 取技術指標
     try:
         d = analyze_coin(coin)
@@ -1582,13 +1684,38 @@ def _do_ai_analyze(coin, price=0, change24h=0):
         vol_r   = d.get("vol_ratio", 1.0) or 1.0
         funding = d.get("funding_rate", 0) or 0
         ma_bull = d.get("ma_bull", False)
+        ma_bear = d.get("ma_bear", False)
         bb_pos  = d.get("bb_position", "middle")
-        price   = price or d.get("price", 0)
+        # 使用已收盤 K 線快照；呼叫端傳入的即時價不能改變同根 K 線的決策。
+        price   = d.get("price", 0) or price
+        change24h = d.get("change_24h", change24h)
         lana_score = d.get("lana_score", 0) or 0
+        rule_decision = {
+            "direction": d.get("rule_direction", "WATCH"),
+            "long_score": d.get("long_score", 0),
+            "short_score": d.get("short_score", 0),
+            "selected_score": d.get("direction_score", 0),
+            "score_gap": d.get("score_gap", 0),
+            "signal_id": d.get("signal_id"),
+            "feature_hash": d.get("feature_hash"),
+            "strategy_version": d.get("strategy_version"),
+            "veto_reason": d.get("direction_reason") if d.get("rule_direction") == "WATCH" else None,
+        }
     except Exception:
-        rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; bb_pos = "middle"; d = {}
+        rsi_1h = 50; vol_r = 1.0; funding = 0; ma_bull = False; ma_bear = False; bb_pos = "middle"; d = {}
         lana_score = 0
-    trend = "up" if ma_bull else "neutral"
+        rule_decision = score_direction({
+            "coin": coin, "timeframe": "1h", "candle_close_ts": None,
+            "price": price, "change_24h": change24h,
+            "rsi": 50, "vol_ratio": 1, "bb_position": "middle",
+        })
+
+    signal_id = rule_decision.get("signal_id")
+    cached = _ai_analyze_cache.get(signal_id)
+    if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
+        return cached["result"]
+    trend = "up" if ma_bull else "down" if ma_bear else "neutral"
+    trend_label = {"up": "上升", "down": "下降", "neutral": "中性"}[trend]
     sl_long  = round(price * 0.97, 6) if price else 0
     t1_long  = round(price * 1.04, 6) if price else 0
     t2_long  = round(price * 1.08, 6) if price else 0
@@ -1615,10 +1742,12 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     prompt = f"""你是專業加密貨幣短線交易員。分析 {coin}/USDT。
 
 現價：{price}，24H漲幅：{change24h:+.1f}%
-技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={'上升' if ma_bull else '中性'}，布林位置={bb_pos}，資金費率={funding:+.4f}%
+技術指標：RSI={rsi_1h:.0f}，量比={vol_r:.1f}x，趨勢={trend_label}，布林位置={bb_pos}，資金費率={funding:+.4f}%
+確定性規則：方向={rule_decision.get('direction')}，LONG={rule_decision.get('long_score')}，SHORT={rule_decision.get('short_score')}，分差={rule_decision.get('score_gap')}
 {kline_context}
 
 ⚠️ 判斷原則（多空對等看待，不偏多也不偏空）：
+- 你只能確認規則方向或回答 WATCH；不得把規則 LONG 翻成 SHORT，也不得把規則 SHORT 翻成 LONG
 - 24H 漲幅 >15% 且量能放大，代表有資金進場，是強勢標的，回調未破關鍵支撐前可考慮順勢 LONG
 - 24H 跌幅 >15% 且量能放大，代表有資金出逃，是弱勢標的，反彈未過關鍵壓力前可考慮順勢 SHORT
 - 漲勢中的小幅回調（距高點 -5% 到 -10%）屬正常洗盤，若 RSI 未超買（<70）且 MA 仍多頭，可在支撐位 LONG
@@ -1695,39 +1824,47 @@ def _do_ai_analyze(coin, price=0, change24h=0):
             print(f"[Claude] 例外 {coin}: {e}")
 
     if not result:
-        result = {"direction": "WATCH", "score": 50, "model": "rules",
-                  "summary": "AI分析暫時無法使用", "reason": "",
+        result = {"direction": rule_decision.get("direction", "WATCH"),
+                  "score": rule_decision.get("selected_score", 0), "model": "rules",
+                  "summary": "AI暫時無法使用，採確定性規則", "reason": "",
                   "entry_zone": 0, "stop_loss": 0, "target_1": 0, "target_2": 0,
-                  "timeframe": "N/A", "risk_note": "請稍後再試"}
+                  "timeframe": "N/A", "risk_note": "規則模式，僅供模擬驗證"}
 
-    # 修正進出場數字合理性
-    def fix(v, default):
-        try:
-            f = float(v)
-            return f if f > 0 else default
-        except:
-            return default
-
-    direction = result.get("direction", "WATCH")
-    if price > 0:
-        if direction == "SHORT":
-            entry = fix(result.get("entry_zone"), round(price * 1.005, 6))
-            sl    = fix(result.get("stop_loss"), sl_short)
-            if sl <= entry: sl = max(sl_short, round(entry * 1.02, 6))
-            result["entry_zone"] = entry; result["stop_loss"] = sl
-            result["target_1"]   = fix(result.get("target_1"), t1_short)
-            result["target_2"]   = fix(result.get("target_2"), t2_short)
-        else:
-            entry = fix(result.get("entry_zone"), round(price * 0.995, 6))
-            sl    = fix(result.get("stop_loss"), sl_long)
-            if sl >= entry: sl = min(sl_long, round(entry * 0.98, 6))
-            result["entry_zone"] = entry; result["stop_loss"] = sl
-            result["target_1"]   = fix(result.get("target_1"), t1_long)
-            result["target_2"]   = fix(result.get("target_2"), t2_long)
-
-    _ai_analyze_cache[coin] = {"ts": now_ts, "result": result}
+    result = arbitrate_ai_result(rule_decision, result)
+    level_features = {
+        "price": price,
+        "atr": d.get("atr") if d else None,
+        "recent_high": d.get("recent_high") if d else None,
+        "recent_low": d.get("recent_low") if d else None,
+    }
+    result.update(build_trade_levels(level_features, result.get("direction", "WATCH")))
     result["lana_score"] = lana_score
-    result["_price_at_analysis"] = price  # 記錄分析時的價格，供快取有效性判斷
+    result["coin"] = coin
+    result["timeframe"] = result.get("timeframe") or "1H"
+    result["candle_close_ts"] = d.get("candle_close_ts") if d else None
+    result["_price_at_analysis"] = price
+
+    if PAPER_TRADING_ENABLED:
+        try:
+            paper_signal = {
+                key: result.get(key) for key in (
+                    "signal_id", "strategy_version", "coin", "direction", "score",
+                    "rule_direction", "ai_direction", "long_score", "short_score",
+                    "lana_score", "entry_zone", "stop_loss", "target_1", "target_2",
+                    "candle_close_ts", "feature_hash", "model", "arbiter_reason",
+                )
+            }
+            _, paper_trade, paper_reason, paper_created = record_and_open_paper(
+                _paper_paths(), PAPER_SETTINGS, paper_signal
+            )
+            result["paper_status"] = paper_reason
+            result["paper_trade_id"] = paper_trade.get("trade_id") if paper_trade else None
+            result["paper_signal_created"] = paper_created
+        except Exception as e:
+            log.warning(f"Paper Trading 記錄失敗 {coin}: {e}")
+            result["paper_status"] = "record_failed"
+
+    _ai_analyze_cache[signal_id] = {"coin": coin, "ts": now_ts, "result": result}
     return result
 
 
@@ -1848,7 +1985,9 @@ def telegram_webhook():
                 coin = action.split(":", 1)[1]
                 if force:
                     # 清除快取，強制重新分析
-                    _ai_analyze_cache.pop(coin, None)
+                    for cache_key, cache_value in list(_ai_analyze_cache.items()):
+                        if cache_value.get("coin") == coin:
+                            _ai_analyze_cache.pop(cache_key, None)
                     _tg_edit_message(chat_id, msg_id,
                         cq["message"].get("text", "") + "\n\n🔄 強制重新分析中（忽略快取），約30秒...")
                 else:
@@ -2046,9 +2185,55 @@ def api_push_control():
         return jsonify({"ok": False, "error": "action 需為 pause 或 resume"}), 400
 
 
+# ── Paper Trading Routes（永遠不送真實訂單）──────────────────
+@app.route("/api/paper/status", methods=["GET"])
+def api_paper_status():
+    book = _load_paper()
+    return jsonify({
+        "ok": True,
+        "enabled": PAPER_TRADING_ENABLED,
+        "summary": book_summary(book),
+        "settings": book.get("settings", {}),
+        "open_positions": [t for t in book.get("trades", []) if t.get("status") == "OPEN"],
+        "recent_trades": book.get("trades", [])[:20],
+        "recent_signals": book.get("signals", [])[:20],
+    })
+
+
+@app.route("/api/paper/mark", methods=["POST"])
+def api_paper_mark():
+    if not PAPER_TRADING_ENABLED:
+        return jsonify({"ok": True, "enabled": False, "updated": 0})
+    book = _load_paper()
+    coins = sorted({
+        trade.get("coin") for trade in book.get("trades", [])
+        if trade.get("status") == "OPEN" and trade.get("coin")
+    })
+    prices = {}
+    for coin in coins:
+        try:
+            ticker = fetch_ticker(coin + "USDT")
+            current = float(ticker.get("lastPrice", 0))
+            if current > 0:
+                prices[coin] = current
+        except Exception as e:
+            log.warning(f"Paper mark 無法取得 {coin}: {e}")
+    updated = mark_positions(book, prices)
+    if updated:
+        _save_paper(book)
+    return jsonify({
+        "ok": True, "enabled": True, "updated": updated,
+        "prices": prices, "summary": book_summary(book),
+    })
+
+
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "ts": datetime.now().isoformat()})
+    return jsonify({
+        "status": "ok", "ts": datetime.now().isoformat(),
+        "paper_trading": PAPER_TRADING_ENABLED,
+        "strategy_version": "lana-direction-v1",
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=False)
