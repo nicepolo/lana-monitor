@@ -22,6 +22,13 @@ from paper_trading import (
     record_and_open as record_and_open_paper,
     save_book as save_paper_book,
 )
+from position_assistant import (
+    close_position as close_manual_position,
+    load_store as load_position_store,
+    monitor_positions as evaluate_manual_positions,
+    open_position as open_manual_position,
+    save_store as save_position_store,
+)
 
 # ── Meme Signals Cache ──
 _meme_cache = {"results": [], "ts": ""}
@@ -57,6 +64,7 @@ JOURNAL_FILE    = '/data/trade_journal.json'
 RISK_DATA_FILE   = '/data/risk_data.json'
 BACKTEST_FILE    = '/data/backtest_data.json'
 PAPER_FILE       = '/data/paper_trading.json'
+POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "10000")),
@@ -68,6 +76,19 @@ PAPER_SETTINGS = {
     "slippage_rate": float(os.environ.get("PAPER_SLIPPAGE_RATE", "0.0005")),
     "trailing_pct": float(os.environ.get("PAPER_TRAILING_PCT", "0.02")),
     "max_hold_hours": float(os.environ.get("PAPER_MAX_HOLD_HOURS", "24")),
+}
+POSITION_SETTINGS = {
+    "add_fraction": float(os.environ.get("POSITION_ADD_FRACTION", "0.25")),
+    "add_at_r": float(os.environ.get("POSITION_ADD_AT_R", "0.5")),
+    "add_min_direction_score": int(os.environ.get("POSITION_ADD_MIN_SCORE", "75")),
+    "trailing_pct": float(os.environ.get("POSITION_TRAILING_PCT", "0.02")),
+    "heartbeat_minutes": int(os.environ.get("POSITION_HEARTBEAT_MINUTES", "60")),
+}
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+_ai_provider_status = {
+    "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None},
+    "claude": {"model": ANTHROPIC_MODEL, "last_success": None, "last_error": None},
 }
 
 
@@ -81,6 +102,18 @@ def _load_paper():
 
 def _save_paper(book):
     return save_paper_book(book, _paper_paths())
+
+
+def _position_paths():
+    return [POSITIONS_FILE, os.path.join(os.path.dirname(__file__), 'manual_positions.json')]
+
+
+def _load_positions():
+    return load_position_store(_position_paths(), POSITION_SETTINGS)
+
+
+def _save_positions(store):
+    return save_position_store(store, _position_paths())
 
 SECTORS = {
     'DOGE':'迷因','SHIB':'迷因','PEPE':'迷因','WIF':'迷因','BONK':'迷因',
@@ -1673,6 +1706,61 @@ def api_entry_index_telegram():
 
 
 
+def _provider_error_category(response=None, error=None):
+    if response is not None:
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status in (401, 403): return "auth_error"
+        if status == 429: return "rate_limited"
+        if status >= 500: return "server_error"
+        if status >= 400: return "request_rejected"
+    if isinstance(error, requests.Timeout): return "timeout"
+    if error is not None: return "request_error"
+    return "invalid_response"
+
+
+def _record_provider_status(provider, error=None):
+    stamp = datetime.now(timezone.utc).isoformat()
+    if error:
+        _ai_provider_status[provider]["last_error"] = {"category": error, "ts": stamp}
+    else:
+        _ai_provider_status[provider]["last_success"] = stamp
+        _ai_provider_status[provider]["last_error"] = None
+
+
+def _fallback_reason_text(provider_errors):
+    labels = {
+        "not_configured": "未設定金鑰",
+        "auth_error": "金鑰驗證失敗",
+        "rate_limited": "使用額度或頻率受限",
+        "server_error": "服務端暫時異常",
+        "request_rejected": "請求被拒絕",
+        "timeout": "連線逾時",
+        "request_error": "連線失敗",
+        "invalid_response": "回傳格式異常",
+    }
+    provider_names = {"gemini": "Gemini", "claude": "Claude"}
+    return "；".join(
+        f"{provider_names.get(name, name)}：{labels.get(reason, reason)}"
+        for name, reason in provider_errors.items()
+    )
+
+
+def _post_ai(url, **kwargs):
+    """Retry a provider once only for transient failures."""
+    response = None
+    for attempt in range(2):
+        try:
+            response = requests.post(url, **kwargs)
+            if response.ok or response.status_code not in (429, 500, 502, 503, 504):
+                return response, None
+            error = _provider_error_category(response=response)
+        except Exception as exc:
+            error = _provider_error_category(error=exc)
+        if attempt == 0:
+            time.sleep(1)
+    return response, error
+
+
 def _do_ai_analyze(coin, price=0, change24h=0):
     """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
     now_ts = time.time()
@@ -1768,11 +1856,12 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
     gemini_key    = os.getenv("GEMINI_API_KEY", "")
     result = None
+    provider_errors = {}
 
     if gemini_key:
         try:
-            r = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            r, request_error = _post_ai(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
@@ -1791,25 +1880,35 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                             # 用 raw_decode 只取第一個完整 JSON，忽略後面多餘的資料
                             obj, _ = json.JSONDecoder().raw_decode(text)
                             result = obj
-                            result["model"] = "gemini-2.0-flash"
+                            result["model"] = GEMINI_MODEL
+                            _record_provider_status("gemini")
                         except Exception as je:
+                            provider_errors["gemini"] = "invalid_response"
                             print(f"[Gemini] JSON解析失敗 {coin}: {je} | text={text[:100]}")
                     else:
+                        provider_errors["gemini"] = "invalid_response"
                         print(f"[Gemini] 回傳空白 {coin}: finishReason={cands[0].get('finishReason')}")
                 else:
+                    provider_errors["gemini"] = "invalid_response"
                     print(f"[Gemini] 無candidates {coin}: {jr}")
             else:
+                provider_errors["gemini"] = request_error or _provider_error_category(response=r)
                 print(f"[Gemini] HTTP {r.status_code} {coin}: {r.text[:300]}")
         except Exception as e:
+            provider_errors["gemini"] = _provider_error_category(error=e)
             print(f"[Gemini] 例外 {coin}: {e}")
+        if not result:
+            _record_provider_status("gemini", provider_errors.get("gemini", "invalid_response"))
+    else:
+        provider_errors["gemini"] = "not_configured"
 
     if not result and anthropic_key:
         try:
-            r = requests.post(
+            r, request_error = _post_ai(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
                          "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                json={"model": ANTHROPIC_MODEL, "max_tokens": 500,
                       "messages": [{"role": "user", "content": prompt}]},
                 timeout=20
             )
@@ -1817,18 +1916,27 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 text = r.json()["content"][0]["text"]
                 text = text.strip().replace("```json","").replace("```","").strip()
                 result = json.loads(text)
-                result["model"] = "claude-haiku"
+                result["model"] = ANTHROPIC_MODEL
+                _record_provider_status("claude")
             else:
+                provider_errors["claude"] = request_error or _provider_error_category(response=r)
                 print(f"[Claude] HTTP {r.status_code} {coin}: {r.text[:300]}")
         except Exception as e:
+            provider_errors["claude"] = _provider_error_category(error=e)
             print(f"[Claude] 例外 {coin}: {e}")
+        if not result:
+            _record_provider_status("claude", provider_errors.get("claude", "invalid_response"))
+    elif not result:
+        provider_errors["claude"] = "not_configured"
 
     if not result:
+        fallback_reason = _fallback_reason_text(provider_errors)
         result = {"direction": rule_decision.get("direction", "WATCH"),
                   "score": rule_decision.get("selected_score", 0), "model": "rules",
-                  "summary": "AI暫時無法使用，採確定性規則", "reason": "",
+                  "summary": "AI 暫時忙碌，已切換確定性規則", "reason": fallback_reason,
+                  "ai_fallback_reason": provider_errors,
                   "entry_zone": 0, "stop_loss": 0, "target_1": 0, "target_2": 0,
-                  "timeframe": "N/A", "risk_note": "規則模式，僅供模擬驗證"}
+                  "timeframe": "N/A", "risk_note": "規則模式僅供模擬驗證，請嚴格遵守止損。"}
 
     result = arbitrate_ai_result(rule_decision, result)
     level_features = {
@@ -1963,6 +2071,30 @@ def _tg_edit_message(chat_id, message_id, text):
     except Exception as e:
         log.warning(f"TG 編輯訊息失敗: {e}")
 
+
+def _find_recorded_signal(signal_id):
+    signal = next((s for s in _load_paper().get("signals", []) if s.get("signal_id") == signal_id), None)
+    if signal:
+        return signal
+    for cached in _ai_analyze_cache.values():
+        result = cached.get("result", {})
+        if result.get("signal_id") == signal_id:
+            return result
+    return None
+
+
+def _position_text(position):
+    direction = "做多" if position.get("direction") == "LONG" else "做空"
+    return (
+        f"📌 <b>{position.get('coin')}/USDT 持倉助手</b>\n"
+        f"方向：{direction}\n"
+        f"入場：{position.get('entry_price')}\n"
+        f"目前：{position.get('last_price')}（{position.get('pnl_pct', 0):+.2f}% / "
+        f"{position.get('last_r', 0):+.2f}R）\n"
+        f"止損：{position.get('stop_loss')}\n"
+        f"目標1：{position.get('target_1')}｜目標2：{position.get('target_2')}"
+    )
+
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
     """處理 TG 按鈕點擊與文字指令"""
@@ -1980,7 +2112,51 @@ def telegram_webhook():
             log.info(f"[webhook] callback action={action}")
             _tg_answer_callback(cq_id, "處理中...")
 
-            if action.startswith("analyze:") or action.startswith("reanalyze:"):
+            if action.startswith("entered:"):
+                signal_id = action.split(":", 1)[1]
+                signal = _find_recorded_signal(signal_id)
+                if not signal:
+                    _tg_send(chat_id, "⚠️ 找不到這筆訊號，請重新分析後再按一次「已下單」。")
+                else:
+                    store = _load_positions()
+                    position, reason = open_manual_position(store, signal)
+                    if position and reason == "tracking_started":
+                        _save_positions(store)
+                        _tg_send(
+                            chat_id,
+                            "✅ 已啟動持倉助手（不會自動向交易所下單）\n\n" + _position_text(position),
+                            reply_markup={"inline_keyboard": [[
+                                {"text": "📊 查看持倉", "callback_data": "positions_status"},
+                                {"text": "🏁 已平倉", "callback_data": f"position_close:{position['position_id']}"},
+                            ]]},
+                        )
+                    elif position and reason == "already_tracking":
+                        _tg_send(chat_id, "ℹ️ 這筆持倉已在追蹤中。\n\n" + _position_text(position))
+                    else:
+                        labels = {
+                            "coin_already_tracking": "同一幣種已有持倉在追蹤，請先標記已平倉。",
+                            "invalid_levels": "這筆訊號的進場、止損或目標價格不完整。",
+                        }
+                        _tg_send(chat_id, "⚠️ 無法啟動持倉助手：" + labels.get(reason, reason))
+
+            elif action.startswith("position_close:"):
+                position_id = action.split(":", 1)[1]
+                store = _load_positions()
+                position, reason = close_manual_position(store, position_id)
+                if position and reason == "closed":
+                    _save_positions(store)
+                    _tg_send(chat_id, f"🏁 已停止追蹤 {position.get('coin')}/USDT。")
+                else:
+                    _tg_send(chat_id, "ℹ️ 這筆持倉已停止追蹤或不存在。")
+
+            elif action == "positions_status":
+                active = [p for p in _load_positions().get("positions", []) if p.get("status") == "ACTIVE"]
+                if not active:
+                    _tg_send(chat_id, "📭 目前沒有由持倉助手追蹤的部位。")
+                else:
+                    _tg_send(chat_id, "\n\n".join(_position_text(p) for p in active))
+
+            elif action.startswith("analyze:") or action.startswith("reanalyze:"):
                 force = action.startswith("reanalyze:")
                 coin = action.split(":", 1)[1]
                 if force:
@@ -2031,7 +2207,18 @@ def telegram_webhook():
                             f"⏱ 持倉: {res.get('timeframe','4-8小時')}\n⚠️ {_html.escape(str(res.get('risk_note','嚴控倉位')))}",
                             f"\n⏰ {datetime.now(taipei).strftime('%H:%M')}"
                         ]
-                        _tg_send(chat_id, "\n".join(l for l in lines if l))
+                        keyboard = [[
+                            {"text": "🔄 重新分析", "callback_data": f"reanalyze:{coin}"},
+                        ]]
+                        if res.get("signal_id") and direction in ("LONG", "SHORT"):
+                            keyboard.insert(0, [{
+                                "text": "✅ 已下單，開始追蹤",
+                                "callback_data": f"entered:{res.get('signal_id')}",
+                            }])
+                        _tg_send(
+                            chat_id, "\n".join(l for l in lines if l),
+                            reply_markup={"inline_keyboard": keyboard},
+                        )
                     else:
                         _tg_send(chat_id, f"❌ {coin} 分析失敗，請稍後再試")
                 except Exception as e:
@@ -2227,11 +2414,53 @@ def api_paper_mark():
     })
 
 
+@app.route("/api/positions/active", methods=["GET"])
+def api_positions_active():
+    store = _load_positions()
+    active = [p for p in store.get("positions", []) if p.get("status") == "ACTIVE"]
+    return jsonify({"ok": True, "count": len(active), "positions": active})
+
+
+@app.route("/api/positions/monitor", methods=["POST"])
+def api_positions_monitor():
+    store = _load_positions()
+    active_coins = sorted({
+        p.get("coin") for p in store.get("positions", [])
+        if p.get("status") == "ACTIVE" and p.get("coin")
+    })
+    snapshots = {}
+    errors = {}
+    for coin in active_coins:
+        try:
+            snapshots[coin] = analyze_coin(coin)
+        except Exception as exc:
+            errors[coin] = type(exc).__name__
+            log.warning(f"Position monitor snapshot failed for {coin}: {exc}")
+    alerts, changed = evaluate_manual_positions(store, snapshots)
+    if changed:
+        _save_positions(store)
+    return jsonify({
+        "ok": True, "monitored": len(snapshots), "alerts": alerts,
+        "errors": errors,
+        "active": [p for p in store.get("positions", []) if p.get("status") == "ACTIVE"],
+    })
+
+
+@app.route("/api/ai/status", methods=["GET"])
+def api_ai_status():
+    providers = {
+        "gemini": dict(_ai_provider_status["gemini"], configured=bool(os.getenv("GEMINI_API_KEY", ""))),
+        "claude": dict(_ai_provider_status["claude"], configured=bool(os.getenv("ANTHROPIC_API_KEY", ""))),
+    }
+    return jsonify({"ok": True, "providers": providers})
+
+
 @app.route("/health")
 def health():
     return jsonify({
         "status": "ok", "ts": datetime.now().isoformat(),
         "paper_trading": PAPER_TRADING_ENABLED,
+        "position_assistant": True,
         "strategy_version": "lana-direction-v1",
     })
 
