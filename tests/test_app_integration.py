@@ -12,7 +12,15 @@ class AppIntegrationTests(unittest.TestCase):
         response = app.app.test_client().get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["paper_trading"])
+        self.assertTrue(response.json["position_assistant"])
         self.assertEqual(response.json["strategy_version"], "lana-direction-v1")
+
+    def test_ai_status_never_exposes_keys(self):
+        with patch.dict(app.os.environ, {"GEMINI_API_KEY": "secret", "ANTHROPIC_API_KEY": ""}):
+            response = app.app.test_client().get("/api/ai/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["providers"]["gemini"]["configured"])
+        self.assertNotIn("secret", response.get_data(as_text=True))
 
     def test_rules_fallback_produces_deterministic_long(self):
         snapshot = {
@@ -35,6 +43,7 @@ class AppIntegrationTests(unittest.TestCase):
         self.assertEqual(result["direction"], "LONG")
         self.assertEqual(result["signal_id"], "stable-signal")
         self.assertEqual(result["model"], "rules")
+        self.assertEqual(result["ai_fallback_reason"]["gemini"], "not_configured")
         self.assertLess(result["stop_loss"], result["entry_zone"])
         self.assertGreater(result["target_2"], result["target_1"])
 

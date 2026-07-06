@@ -7,6 +7,7 @@ lana_project/
 ├── app.py                  # 主後端 Flask API（lana-monitor）
 ├── lana_strategy.py        # 確定性多空評分、訊號 ID、ATR 交易價位
 ├── paper_trading.py        # 模擬倉位、止盈止損、移動止損
+├── position_assistant.py   # 使用者已下單後的持倉追蹤與動作通知
 ├── requirements.txt        # lana-monitor 依賴
 ├── Procfile                # Railway 啟動設定
 ├── templates/
@@ -48,6 +49,9 @@ lana_project/
 | /api/ai_analyze | POST | 對指定幣種做 AI 深度分析 |
 | /api/paper/status | GET | 查詢模擬訊號、持倉與績效 |
 | /api/paper/mark | POST | 依目前價格更新模擬止盈止損 |
+| /api/positions/active | GET | 查詢使用者標記「已下單」的追蹤部位 |
+| /api/positions/monitor | POST | 更新持倉並回傳加倉、減倉、平倉或續抱通知 |
+| /api/ai/status | GET | 查詢 AI 供應商設定與安全的錯誤分類（不回傳金鑰） |
 | /api/push_control | GET/POST | 查詢/設定推播暫停狀態 |
 | /telegram/webhook | POST | TG Webhook（接收按鈕點擊）|
 | /telegram/set_webhook | GET | 一次性設定 TG Webhook |
@@ -68,6 +72,14 @@ lana_project/
 - AI 只能確認規則方向或否決為 WATCH，不能反轉方向。
 - Paper Trading 內建 0.5% 單筆風險、TP1 50%、TP2 30%、剩餘倉位移動止損及 24 小時時間止損。
 - Paper Trading 永遠不會呼叫 OKX 私有交易 API。
+
+## 持倉助手
+
+- Telegram 訊號的「✅ 已下單，開始追蹤」只會記錄並追蹤部位，不會向 OKX 送單。
+- 每 15 分鐘檢查止損、TP1、TP2、移動止損與技術方向是否失效。
+- 加倉只允許在已有至少 `+0.5R` 獲利、原方向仍達 75 分時提醒一次；虧損時不會建議攤平。
+- 沒有動作時每 60 分鐘回報一次續抱，避免使用者不知道系統是否仍在追蹤。
+- 使用者實際平倉後需按「🏁 已平倉」，系統才會停止追蹤。
 
 ## 本地測試
 
