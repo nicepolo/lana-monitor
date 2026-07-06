@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from position_assistant import close_position, monitor_positions, new_store, open_position
+from position_assistant import close_position, monitor_positions, new_store, open_position, update_entry
 
 
 BASE_SIGNAL = {
@@ -63,6 +63,22 @@ class PositionAssistantTests(unittest.TestCase):
         position, reason = close_position(self.store, self.position["position_id"], now=self.now)
         self.assertEqual(reason, "closed")
         self.assertEqual(position["status"], "CLOSED")
+
+    def test_actual_fill_and_exchange_are_recorded(self):
+        store = new_store()
+        signal = dict(BASE_SIGNAL, actual_entry_price=101, exchange="BINANCE")
+        position, reason = open_position(store, signal, self.now)
+        self.assertEqual(reason, "tracking_started")
+        self.assertEqual(position["entry_price"], 101)
+        self.assertEqual(position["signal_entry_price"], 100)
+        self.assertEqual(position["exchange"], "BINANCE")
+
+    def test_user_can_calibrate_actual_fill(self):
+        position, reason = update_entry(self.store, "LIT", 102, "BINANCE")
+        self.assertEqual(reason, "updated")
+        self.assertEqual(position["entry_price"], 102)
+        self.assertEqual(position["initial_risk"], 7)
+        self.assertEqual(position["entry_source"], "user_reported")
 
 
 if __name__ == "__main__":

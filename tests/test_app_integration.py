@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 import app
+from position_assistant import new_store, open_position
 
 
 class AppIntegrationTests(unittest.TestCase):
@@ -46,6 +47,29 @@ class AppIntegrationTests(unittest.TestCase):
         self.assertEqual(result["ai_fallback_reason"]["gemini"], "not_configured")
         self.assertLess(result["stop_loss"], result["entry_zone"])
         self.assertGreater(result["target_2"], result["target_1"])
+
+    def test_position_monitor_uses_live_quote_not_closed_candle_price(self):
+        store = new_store()
+        position, _ = open_position(store, {
+            "signal_id": "live-price-test", "coin": "LIT", "direction": "LONG",
+            "entry_zone": 100, "stop_loss": 95, "target_1": 110, "target_2": 120,
+            "exchange": "BINANCE",
+        })
+        stale_technical = {
+            "coin": "LIT", "price": 101, "rule_direction": "LONG", "direction_score": 80,
+        }
+        with patch.object(app, "_load_positions", return_value=store), \
+             patch.object(app, "_save_positions"), \
+             patch.object(app, "analyze_coin", return_value=stale_technical), \
+             patch.object(app, "fetch_position_price", return_value={
+                 "price": 94, "price_source": "BINANCE_LIVE", "price_ts": 123,
+             }):
+            response = app.app.test_client().post("/api/positions/monitor")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["alerts"][0]["action"], "CLOSE")
+        self.assertEqual(position["last_price"], 94)
+        self.assertEqual(position["price_source"], "BINANCE_LIVE")
 
 
 if __name__ == "__main__":

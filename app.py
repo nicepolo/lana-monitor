@@ -28,6 +28,7 @@ from position_assistant import (
     monitor_positions as evaluate_manual_positions,
     open_position as open_manual_position,
     save_store as save_position_store,
+    update_entry as update_manual_entry,
 )
 
 # ── Meme Signals Cache ──
@@ -84,6 +85,7 @@ POSITION_SETTINGS = {
     "trailing_pct": float(os.environ.get("POSITION_TRAILING_PCT", "0.02")),
     "heartbeat_minutes": int(os.environ.get("POSITION_HEARTBEAT_MINUTES", "60")),
 }
+POSITION_DEFAULT_EXCHANGE = os.environ.get("POSITION_DEFAULT_EXCHANGE", "BINANCE").upper()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 _ai_provider_status = {
@@ -559,6 +561,35 @@ def fetch_ticker(symbol):
         return r.json()
     except:
         return {}
+
+
+def fetch_position_price(coin, exchange="BINANCE"):
+    """Fetch an execution-grade live quote; never substitute a closed candle."""
+    coin = str(coin or "").upper()
+    exchange = str(exchange or POSITION_DEFAULT_EXCHANGE).upper()
+    if exchange == "BINANCE":
+        response = requests.get(
+            f"{FUTURES_BASE}/fapi/v1/ticker/price",
+            params={"symbol": f"{coin}USDT"}, timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        price = float(data.get("price") or 0)
+        ts = data.get("time")
+    elif exchange == "OKX":
+        response = requests.get(
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": f"{coin}-USDT-SWAP"}, timeout=10,
+        )
+        response.raise_for_status()
+        rows = response.json().get("data", [])
+        price = float(rows[0].get("last") or 0) if rows else 0
+        ts = rows[0].get("ts") if rows else None
+    else:
+        raise ValueError(f"unsupported exchange: {exchange}")
+    if price <= 0:
+        raise ValueError(f"no live {exchange} price for {coin}")
+    return {"price": price, "price_source": f"{exchange}_LIVE", "price_ts": ts}
 
 def fetch_funding(symbol):
     try:
@@ -2087,10 +2118,11 @@ def _position_text(position):
     direction = "做多" if position.get("direction") == "LONG" else "做空"
     return (
         f"📌 <b>{position.get('coin')}/USDT 持倉助手</b>\n"
-        f"方向：{direction}\n"
-        f"入場：{position.get('entry_price')}\n"
+        f"方向：{direction}｜交易所：{position.get('exchange', POSITION_DEFAULT_EXCHANGE)}\n"
+        f"成交入場：{position.get('entry_price')}\n"
         f"目前：{position.get('last_price')}（{position.get('pnl_pct', 0):+.2f}% / "
         f"{position.get('last_r', 0):+.2f}R）\n"
+        f"價格來源：{position.get('price_source', '尚未取得即時價')}\n"
         f"止損：{position.get('stop_loss')}\n"
         f"目標1：{position.get('target_1')}｜目標2：{position.get('target_2')}"
     )
@@ -2119,12 +2151,21 @@ def telegram_webhook():
                     _tg_send(chat_id, "⚠️ 找不到這筆訊號，請重新分析後再按一次「已下單」。")
                 else:
                     store = _load_positions()
-                    position, reason = open_manual_position(store, signal)
+                    execution_signal = dict(signal)
+                    execution_signal["exchange"] = POSITION_DEFAULT_EXCHANGE
+                    try:
+                        quote = fetch_position_price(signal.get("coin"), POSITION_DEFAULT_EXCHANGE)
+                        execution_signal["actual_entry_price"] = quote["price"]
+                    except Exception as exc:
+                        log.warning(f"Live entry quote failed: {exc}")
+                    position, reason = open_manual_position(store, execution_signal)
                     if position and reason == "tracking_started":
                         _save_positions(store)
                         _tg_send(
                             chat_id,
-                            "✅ 已啟動持倉助手（不會自動向交易所下單）\n\n" + _position_text(position),
+                            "✅ 已啟動持倉助手（不會自動向交易所下單）\n"
+                            f"若實際成交價不同，請傳：<code>/entry {position['coin']} 實際成交價</code>\n\n"
+                            + _position_text(position),
                             reply_markup={"inline_keyboard": [[
                                 {"text": "📊 查看持倉", "callback_data": "positions_status"},
                                 {"text": "🏁 已平倉", "callback_data": f"position_close:{position['position_id']}"},
@@ -2306,6 +2347,27 @@ def telegram_webhook():
             requests.post(f"{WEB_BASE_URL}/api/push_control",
                 json={"action": "resume"}, timeout=8)
             _tg_send(chat_id, "▶️ 已恢復推送訊號 🟢")
+        elif text.startswith("/entry "):
+            parts = text.split()
+            if len(parts) != 3:
+                _tg_send(chat_id, "格式：<code>/entry LIT 2.607257</code>")
+            elif TELEGRAM_CHAT_ID and chat_id != str(TELEGRAM_CHAT_ID):
+                _tg_send(chat_id, "⚠️ 無權修改持倉助手資料。")
+            else:
+                store = _load_positions()
+                position, reason = update_manual_entry(
+                    store, parts[1], parts[2], POSITION_DEFAULT_EXCHANGE
+                )
+                if position and reason == "updated":
+                    _save_positions(store)
+                    _tg_send(chat_id, "✅ 已校正實際成交價。\n\n" + _position_text(position))
+                else:
+                    labels = {
+                        "not_found": "找不到這個幣種的追蹤持倉。",
+                        "invalid_entry": "成交價格式不正確。",
+                        "entry_beyond_stop": "成交價已越過原始止損，請直接重新評估或平倉。",
+                    }
+                    _tg_send(chat_id, "⚠️ " + labels.get(reason, reason))
 
         return jsonify({"ok": True})
 
@@ -2432,7 +2494,17 @@ def api_positions_monitor():
     errors = {}
     for coin in active_coins:
         try:
-            snapshots[coin] = analyze_coin(coin)
+            position = next(
+                p for p in store.get("positions", [])
+                if p.get("status") == "ACTIVE" and p.get("coin") == coin
+            )
+            exchange = position.get("exchange") or POSITION_DEFAULT_EXCHANGE
+            position["exchange"] = exchange
+            technical = analyze_coin(coin)
+            live_quote = fetch_position_price(coin, exchange)
+            # Technical rules use closed candles; risk/PnL always use a live execution quote.
+            technical.update(live_quote)
+            snapshots[coin] = technical
         except Exception as exc:
             errors[coin] = type(exc).__name__
             log.warning(f"Position monitor snapshot failed for {coin}: {exc}")

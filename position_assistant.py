@@ -92,7 +92,8 @@ def open_position(
         return None, "coin_already_tracking"
 
     try:
-        entry = float(signal.get("entry_zone") or 0)
+        signal_entry = float(signal.get("entry_zone") or 0)
+        entry = float(signal.get("actual_entry_price") or signal_entry)
         stop = float(signal.get("stop_loss") or 0)
         target_1 = float(signal.get("target_1") or 0)
         target_2 = float(signal.get("target_2") or 0)
@@ -111,11 +112,14 @@ def open_position(
         "signal_id": signal_id,
         "strategy_version": signal.get("strategy_version"),
         "coin": coin,
+        "exchange": str(signal.get("exchange") or "BINANCE").upper(),
         "direction": direction,
         "status": "ACTIVE",
         "opened_at": timestamp,
         "closed_at": None,
         "entry_price": entry,
+        "signal_entry_price": signal_entry,
+        "entry_source": "button_live" if signal.get("actual_entry_price") else "signal",
         "initial_stop": stop,
         "stop_loss": stop,
         "target_1": target_1,
@@ -139,6 +143,43 @@ def open_position(
     })
     del store["events"][3000:]
     return position, "tracking_started"
+
+
+def update_entry(
+    store: Dict[str, Any], coin: str, entry_price: float,
+    exchange: Optional[str] = None,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Calibrate an active assistant position to the user's actual exchange fill."""
+    coin = str(coin or "").upper()
+    position = next(
+        (p for p in store["positions"] if p.get("status") == "ACTIVE" and p.get("coin") == coin),
+        None,
+    )
+    if not position:
+        return None, "not_found"
+    try:
+        entry_price = float(entry_price)
+    except (TypeError, ValueError):
+        return None, "invalid_entry"
+    if entry_price <= 0:
+        return None, "invalid_entry"
+    stop = float(position.get("initial_stop") or 0)
+    direction = position["direction"]
+    if (direction == "LONG" and entry_price <= stop) or (direction == "SHORT" and entry_price >= stop):
+        return None, "entry_beyond_stop"
+    position["entry_price"] = entry_price
+    position["entry_source"] = "user_reported"
+    position["initial_risk"] = abs(entry_price - stop)
+    position["high_water"] = max(entry_price, float(position.get("last_price") or entry_price))
+    position["low_water"] = min(entry_price, float(position.get("last_price") or entry_price))
+    if exchange:
+        position["exchange"] = str(exchange).upper()
+    store["events"].insert(0, {
+        "ts": _now(), "position_id": position["position_id"],
+        "type": "ENTRY_CALIBRATED", "price": entry_price,
+        "exchange": position.get("exchange"),
+    })
+    return position, "updated"
 
 
 def close_position(
@@ -174,9 +215,12 @@ def _alert(position: Dict[str, Any], action: str, message: str, now: datetime) -
         "position_id": position["position_id"],
         "coin": position["coin"],
         "direction": position["direction"],
+        "exchange": position.get("exchange", "BINANCE"),
         "action": action,
         "message": message,
         "price": position["last_price"],
+        "price_source": position.get("price_source"),
+        "price_ts": position.get("price_ts"),
         "r_multiple": position["last_r"],
         "pnl_pct": position["pnl_pct"],
         "stop_loss": position["stop_loss"],
@@ -212,6 +256,8 @@ def monitor_positions(
         risk = float(position["initial_risk"])
         signed_move = price - position["entry_price"] if is_long else position["entry_price"] - price
         position["last_price"] = price
+        position["price_source"] = snap.get("price_source") or position.get("exchange", "BINANCE")
+        position["price_ts"] = snap.get("price_ts")
         position["last_r"] = round(signed_move / risk, 3) if risk else 0.0
         position["pnl_pct"] = round(signed_move / position["entry_price"] * 100, 3)
         position["high_water"] = max(float(position["high_water"]), price)
