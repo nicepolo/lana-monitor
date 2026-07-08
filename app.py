@@ -1848,13 +1848,19 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     live_price = reference_price
     live_price_source = "CLOSED_1H"
     live_price_available = False
-    try:
-        live_quote = fetch_position_price(coin, "BINANCE")
-        live_price = float(live_quote["price"])
-        live_price_source = live_quote.get("price_source", "BINANCE_LIVE")
-        live_price_available = live_price > 0
-    except Exception as exc:
-        log.warning(f"Entry live price unavailable for {coin}: {exc}")
+    live_errors = []
+    for exchange in ("BINANCE", "OKX"):
+        try:
+            live_quote = fetch_position_price(coin, exchange)
+            live_price = float(live_quote["price"])
+            live_price_source = live_quote.get("price_source", f"{exchange}_LIVE")
+            live_price_available = live_price > 0
+            if live_price_available:
+                break
+        except Exception as exc:
+            live_errors.append(f"{exchange}: {exc}")
+    if not live_price_available:
+        log.warning(f"Entry live price unavailable for {coin}: {'; '.join(live_errors)}")
     entry_drift_pct = (
         abs(live_price - reference_price) / reference_price * 100
         if reference_price > 0 and live_price > 0 else 0
