@@ -67,6 +67,7 @@ BACKTEST_FILE    = '/data/backtest_data.json'
 PAPER_FILE       = '/data/paper_trading.json'
 POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+MAX_ENTRY_DRIFT_PCT = float(os.environ.get("MAX_ENTRY_DRIFT_PCT", "2.0"))
 PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
     "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
@@ -1843,10 +1844,42 @@ def _do_ai_analyze(coin, price=0, change24h=0):
             "rsi": 50, "vol_ratio": 1, "bb_position": "middle",
         })
 
+    reference_price = float(price or 0)
+    live_price = reference_price
+    live_price_source = "CLOSED_1H"
+    try:
+        live_quote = fetch_position_price(coin, "BINANCE")
+        live_price = float(live_quote["price"])
+        live_price_source = live_quote.get("price_source", "BINANCE_LIVE")
+    except Exception as exc:
+        log.warning(f"Entry live price unavailable for {coin}: {exc}")
+    entry_drift_pct = (
+        abs(live_price - reference_price) / reference_price * 100
+        if reference_price > 0 and live_price > 0 else 0
+    )
+
+    def apply_entry_guard(payload):
+        guarded = dict(payload)
+        guarded["reference_price"] = reference_price
+        guarded["live_price"] = live_price
+        guarded["price_source"] = live_price_source
+        guarded["entry_drift_pct"] = round(entry_drift_pct, 2)
+        if guarded.get("direction") in ("LONG", "SHORT") and entry_drift_pct > MAX_ENTRY_DRIFT_PCT:
+            guarded["direction"] = "WATCH"
+            guarded["summary"] = "即時價格已偏離分析價，取消追價，等待下一根確認"
+            guarded["reason"] = (
+                f"即時價 {live_price:g} 與 1H 分析價 {reference_price:g} "
+                f"偏離 {entry_drift_pct:.1f}%，超過 {MAX_ENTRY_DRIFT_PCT:g}% 安全上限"
+            )
+            guarded["arbiter_reason"] = "entry_price_drift_guard"
+            guarded["risk_note"] = "訊號已失效，請勿依原入場價下單"
+            guarded.update(build_trade_levels({"price": live_price}, "WATCH"))
+        return guarded
+
     signal_id = rule_decision.get("signal_id")
     cached = _ai_analyze_cache.get(signal_id)
     if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
-        return cached["result"]
+        return apply_entry_guard(cached["result"])
     trend = "up" if ma_bull else "down" if ma_bear else "neutral"
     trend_label = {"up": "上升", "down": "下降", "neutral": "中性"}[trend]
     sl_long  = round(price * 0.97, 6) if price else 0
@@ -1984,8 +2017,9 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                   "timeframe": "N/A", "risk_note": "規則模式僅供模擬驗證，請嚴格遵守止損。"}
 
     result = arbitrate_ai_result(rule_decision, result)
+    result = apply_entry_guard(result)
     level_features = {
-        "price": price,
+        "price": live_price,
         "atr": d.get("atr") if d else None,
         "recent_high": d.get("recent_high") if d else None,
         "recent_low": d.get("recent_low") if d else None,
@@ -1998,7 +2032,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     result["rsi"] = rsi_1h
     result["vol_ratio"] = vol_r
     result["change_24h"] = change24h
-    result["_price_at_analysis"] = price
+    result["_price_at_analysis"] = reference_price
 
     if PAPER_TRADING_ENABLED:
         try:
