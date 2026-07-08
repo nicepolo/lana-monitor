@@ -68,6 +68,7 @@ PAPER_FILE       = '/data/paper_trading.json'
 POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MAX_ENTRY_DRIFT_PCT = float(os.environ.get("MAX_ENTRY_DRIFT_PCT", "2.0"))
+CLAUDE_FALLBACK_ENABLED = os.environ.get("CLAUDE_FALLBACK_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
     "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
@@ -1913,6 +1914,22 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     cached = _ai_analyze_cache.get(signal_id)
     if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
         return apply_entry_guard(cached["result"])
+    if not live_price_available:
+        result = apply_entry_guard({
+            "direction": rule_decision.get("direction", "WATCH"),
+            "score": rule_decision.get("selected_score", 0),
+            "model": "rules",
+            "summary": "無法取得 Binance 即時價，未呼叫付費 AI",
+            "reason": "交易價格驗證失敗，本輪直接取消以避免無效 API 費用",
+        })
+        result.update({
+            "coin": coin,
+            "signal_id": signal_id,
+            "lana_score": lana_score,
+            "strategy_version": rule_decision.get("strategy_version"),
+        })
+        _ai_analyze_cache[signal_id] = {"coin": coin, "ts": now_ts, "result": result}
+        return result
     trend = "up" if ma_bull else "down" if ma_bear else "neutral"
     trend_label = {"up": "上升", "down": "下降", "neutral": "中性"}[trend]
     sl_long  = round(price * 0.97, 6) if price else 0
@@ -1975,7 +1992,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800,
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300,
                                            "responseMimeType": "application/json"}},
                 timeout=25
             )
@@ -2013,7 +2030,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     else:
         provider_errors["gemini"] = "not_configured"
 
-    if not result and anthropic_key:
+    if not result and anthropic_key and CLAUDE_FALLBACK_ENABLED:
         try:
             r, request_error = _post_ai(
                 "https://api.anthropic.com/v1/messages",
@@ -2038,7 +2055,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
         if not result:
             _record_provider_status("claude", provider_errors.get("claude", "invalid_response"))
     elif not result:
-        provider_errors["claude"] = "not_configured"
+        provider_errors["claude"] = "disabled" if anthropic_key else "not_configured"
 
     if not result:
         fallback_reason = _fallback_reason_text(provider_errors)
