@@ -68,15 +68,22 @@ PAPER_FILE       = '/data/paper_trading.json'
 POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 PAPER_SETTINGS = {
-    "capital": float(os.environ.get("PAPER_CAPITAL", "10000")),
-    "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "0.5")),
+    "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
+    "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
+    "fixed_margin": float(os.environ.get("PAPER_FIXED_MARGIN", "45")),
     "min_signal_score": int(os.environ.get("PAPER_MIN_SIGNAL_SCORE", "70")),
     "max_open_positions": int(os.environ.get("PAPER_MAX_OPEN_POSITIONS", "3")),
-    "leverage": float(os.environ.get("PAPER_LEVERAGE", "3")),
+    "leverage": float(os.environ.get("PAPER_LEVERAGE", "8")),
     "fee_rate": float(os.environ.get("PAPER_FEE_RATE", "0.0005")),
     "slippage_rate": float(os.environ.get("PAPER_SLIPPAGE_RATE", "0.0005")),
     "trailing_pct": float(os.environ.get("PAPER_TRAILING_PCT", "0.02")),
     "max_hold_hours": float(os.environ.get("PAPER_MAX_HOLD_HOURS", "24")),
+    "time_stop_hours": float(os.environ.get("PAPER_TIME_STOP_HOURS", "6")),
+    "time_stop_min_r": float(os.environ.get("PAPER_TIME_STOP_MIN_R", "0.3")),
+    "stop_cooldown_hours": float(os.environ.get("PAPER_STOP_COOLDOWN_HOURS", "8")),
+    "max_coin_stops_24h": int(os.environ.get("PAPER_MAX_COIN_STOPS_24H", "2")),
+    "tp1_fraction": float(os.environ.get("PAPER_TP1_FRACTION", "0.4")),
+    "tp2_fraction": float(os.environ.get("PAPER_TP2_FRACTION", "0.4")),
 }
 POSITION_SETTINGS = {
     "add_fraction": float(os.environ.get("POSITION_ADD_FRACTION", "0.25")),
