@@ -583,14 +583,30 @@ def fetch_position_price(coin, exchange="BINANCE"):
     coin = str(coin or "").upper()
     exchange = str(exchange or POSITION_DEFAULT_EXCHANGE).upper()
     if exchange == "BINANCE":
-        response = requests.get(
-            f"{FUTURES_BASE}/fapi/v1/ticker/price",
-            params={"symbol": f"{coin}USDT"}, timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()
-        price = float(data.get("price") or 0)
-        ts = data.get("time")
+        symbol = f"{coin}USDT"
+        errors = []
+        price = 0
+        ts = None
+        source = "BINANCE_TICKER_LIVE"
+        for path, field, candidate_source in (
+            ("/fapi/v2/ticker/price", "price", "BINANCE_TICKER_LIVE"),
+            ("/fapi/v1/premiumIndex", "markPrice", "BINANCE_MARK_LIVE"),
+        ):
+            try:
+                response = requests.get(
+                    f"{FUTURES_BASE}{path}", params={"symbol": symbol}, timeout=10,
+                )
+                response.raise_for_status()
+                data = response.json()
+                price = float(data.get(field) or 0)
+                ts = data.get("time")
+                source = candidate_source
+                if price > 0:
+                    break
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+        if price <= 0 and errors:
+            raise ValueError("; ".join(errors))
     elif exchange == "OKX":
         response = requests.get(
             "https://www.okx.com/api/v5/market/ticker",
@@ -604,7 +620,11 @@ def fetch_position_price(coin, exchange="BINANCE"):
         raise ValueError(f"unsupported exchange: {exchange}")
     if price <= 0:
         raise ValueError(f"no live {exchange} price for {coin}")
-    return {"price": price, "price_source": f"{exchange}_LIVE", "price_ts": ts}
+    return {
+        "price": price,
+        "price_source": source if exchange == "BINANCE" else "OKX_LIVE",
+        "price_ts": ts,
+    }
 
 def fetch_funding(symbol):
     try:
@@ -1849,16 +1869,13 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     live_price_source = "CLOSED_1H"
     live_price_available = False
     live_errors = []
-    for exchange in ("BINANCE", "OKX"):
-        try:
-            live_quote = fetch_position_price(coin, exchange)
-            live_price = float(live_quote["price"])
-            live_price_source = live_quote.get("price_source", f"{exchange}_LIVE")
-            live_price_available = live_price > 0
-            if live_price_available:
-                break
-        except Exception as exc:
-            live_errors.append(f"{exchange}: {exc}")
+    try:
+        live_quote = fetch_position_price(coin, "BINANCE")
+        live_price = float(live_quote["price"])
+        live_price_source = live_quote.get("price_source", "BINANCE_TICKER_LIVE")
+        live_price_available = live_price > 0
+    except Exception as exc:
+        live_errors.append(f"BINANCE: {exc}")
     if not live_price_available:
         log.warning(f"Entry live price unavailable for {coin}: {'; '.join(live_errors)}")
     entry_drift_pct = (
