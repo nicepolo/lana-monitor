@@ -77,6 +77,29 @@ class AppIntegrationTests(unittest.TestCase):
         self.assertGreater(result["entry_drift_pct"], 10)
         self.assertEqual(result["entry_zone"], 0)
 
+    def test_ai_signal_fails_closed_when_live_price_is_unavailable(self):
+        snapshot = {
+            "rsi": 60, "vol_ratio": 1.8, "funding_rate": 0.01,
+            "ma_bull": True, "bb_position": "upper_half", "price": 100,
+            "change_24h": 9, "lana_score": 85,
+            "rule_direction": "LONG", "long_score": 91, "short_score": 20,
+            "direction_score": 91, "score_gap": 71,
+            "signal_id": "no-live-price", "feature_hash": "no-live-features",
+            "strategy_version": "lana-direction-v1", "direction_reason": "uptrend",
+            "atr": 2, "recent_high": 104, "recent_low": 96,
+            "candle_close_ts": 1234567890000,
+        }
+        with patch.object(app, "analyze_coin", return_value=snapshot), \
+             patch.object(app, "fetch_klines", return_value=[]), \
+             patch.object(app, "fetch_position_price", side_effect=ValueError("ticker unavailable")), \
+             patch.object(app, "PAPER_TRADING_ENABLED", False), \
+             patch.dict(app.os.environ, {"GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": ""}):
+            result = app._do_ai_analyze("TEST", 100, 9)
+
+        self.assertEqual(result["direction"], "WATCH")
+        self.assertEqual(result["arbiter_reason"], "live_entry_price_unavailable")
+        self.assertEqual(result["entry_zone"], 0)
+
     def test_position_monitor_uses_live_quote_not_closed_candle_price(self):
         store = new_store()
         position, _ = open_position(store, {
