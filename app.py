@@ -1847,10 +1847,12 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     reference_price = float(price or 0)
     live_price = reference_price
     live_price_source = "CLOSED_1H"
+    live_price_available = False
     try:
         live_quote = fetch_position_price(coin, "BINANCE")
         live_price = float(live_quote["price"])
         live_price_source = live_quote.get("price_source", "BINANCE_LIVE")
+        live_price_available = live_price > 0
     except Exception as exc:
         log.warning(f"Entry live price unavailable for {coin}: {exc}")
     entry_drift_pct = (
@@ -1864,7 +1866,15 @@ def _do_ai_analyze(coin, price=0, change24h=0):
         guarded["live_price"] = live_price
         guarded["price_source"] = live_price_source
         guarded["entry_drift_pct"] = round(entry_drift_pct, 2)
-        if guarded.get("direction") in ("LONG", "SHORT") and entry_drift_pct > MAX_ENTRY_DRIFT_PCT:
+        direction_is_trade = guarded.get("direction") in ("LONG", "SHORT")
+        if direction_is_trade and not live_price_available:
+            guarded["direction"] = "WATCH"
+            guarded["summary"] = "無法取得交易所即時價，取消進場"
+            guarded["reason"] = "目前只有 1H 歷史收盤價，為避免錯價下單，本輪訊號失效"
+            guarded["arbiter_reason"] = "live_entry_price_unavailable"
+            guarded["risk_note"] = "即時價格恢復前請勿依此訊號下單"
+            guarded.update(build_trade_levels({"price": reference_price}, "WATCH"))
+        elif direction_is_trade and entry_drift_pct > MAX_ENTRY_DRIFT_PCT:
             guarded["direction"] = "WATCH"
             guarded["summary"] = "即時價格已偏離分析價，取消追價，等待下一根確認"
             guarded["reason"] = (
