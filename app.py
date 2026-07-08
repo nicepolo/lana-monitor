@@ -84,6 +84,13 @@ PAPER_SETTINGS = {
     "max_coin_stops_24h": int(os.environ.get("PAPER_MAX_COIN_STOPS_24H", "2")),
     "tp1_fraction": float(os.environ.get("PAPER_TP1_FRACTION", "0.4")),
     "tp2_fraction": float(os.environ.get("PAPER_TP2_FRACTION", "0.4")),
+    "v2_entry_filter": os.environ.get("PAPER_V2_ENTRY_FILTER", "true").lower() in ("1", "true", "yes", "on"),
+    "min_score_gap": float(os.environ.get("PAPER_MIN_SCORE_GAP", "25")),
+    "min_lana_score": float(os.environ.get("PAPER_MIN_LANA_SCORE", "72")),
+    "max_abs_change_24h": float(os.environ.get("PAPER_MAX_ABS_CHANGE_24H", "25")),
+    "half_size_change_24h": float(os.environ.get("PAPER_HALF_SIZE_CHANGE_24H", "15")),
+    "max_same_direction": int(os.environ.get("PAPER_MAX_SAME_DIRECTION", "2")),
+    "max_signal_age_minutes": float(os.environ.get("PAPER_MAX_SIGNAL_AGE_MINUTES", "90")),
 }
 POSITION_SETTINGS = {
     "add_fraction": float(os.environ.get("POSITION_ADD_FRACTION", "0.25")),
@@ -1988,6 +1995,9 @@ def _do_ai_analyze(coin, price=0, change24h=0):
     result["coin"] = coin
     result["timeframe"] = result.get("timeframe") or "1H"
     result["candle_close_ts"] = d.get("candle_close_ts") if d else None
+    result["rsi"] = rsi_1h
+    result["vol_ratio"] = vol_r
+    result["change_24h"] = change24h
     result["_price_at_analysis"] = price
 
     if PAPER_TRADING_ENABLED:
@@ -1998,6 +2008,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                     "rule_direction", "ai_direction", "long_score", "short_score",
                     "lana_score", "entry_zone", "stop_loss", "target_1", "target_2",
                     "candle_close_ts", "feature_hash", "model", "arbiter_reason",
+                    "rsi", "vol_ratio", "change_24h",
                 )
             }
             _, paper_trade, paper_reason, paper_created = record_and_open_paper(

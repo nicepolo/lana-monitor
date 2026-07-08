@@ -17,6 +17,9 @@ class PaperTradingTests(unittest.TestCase):
             "coin": "TEST", "direction": "LONG", "score": 80,
             "entry_zone": 100, "stop_loss": 95,
             "target_1": 105, "target_2": 110,
+            "long_score": 85, "short_score": 30, "lana_score": 80,
+            "model": "gemini", "rsi": 60, "vol_ratio": 1.5,
+            "change_24h": 9,
         }
 
     def test_duplicate_signal_cannot_open_twice(self):
@@ -80,6 +83,25 @@ class PaperTradingTests(unittest.TestCase):
         mark_positions(self.book, {"TEST": 101}, datetime.now(timezone.utc))
         self.assertEqual(trade["status"], "CLOSED")
         self.assertEqual(trade["exit_reason"], "TIME_STOP")
+
+    def test_v2_rejects_extreme_chasing(self):
+        signal = dict(self.signal, signal_id="extreme", change_24h=28)
+        trade, reason = open_trade(self.book, signal)
+        self.assertIsNone(trade)
+        self.assertEqual(reason, "v2_no_extreme_chasing")
+
+    def test_v2_uses_half_margin_after_large_move(self):
+        self.book["settings"].update({"fixed_margin": 45, "leverage": 8})
+        signal = dict(self.signal, signal_id="half", change_24h=18)
+        trade, reason = open_trade(self.book, signal)
+        self.assertEqual(reason, "opened")
+        self.assertAlmostEqual(trade["margin"], 22.5, places=6)
+
+    def test_v2_requires_clear_direction_gap(self):
+        signal = dict(self.signal, signal_id="unclear", long_score=70, short_score=55)
+        trade, reason = open_trade(self.book, signal)
+        self.assertIsNone(trade)
+        self.assertEqual(reason, "v2_direction_gap_too_small")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,13 @@ DEFAULT_SETTINGS = {
     "max_coin_stops_24h": 2,
     "tp1_fraction": 0.4,
     "tp2_fraction": 0.4,
+    "v2_entry_filter": True,
+    "min_score_gap": 25,
+    "min_lana_score": 72,
+    "max_abs_change_24h": 25,
+    "half_size_change_24h": 15,
+    "max_same_direction": 2,
+    "max_signal_age_minutes": 90,
 }
 
 
@@ -133,6 +140,39 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
         return None, "watch_signal"
     if score < float(settings["min_signal_score"]):
         return None, "score_below_minimum"
+    size_multiplier = 1.0
+    if settings.get("v2_entry_filter", True):
+        gap = abs(float(signal.get("long_score") or 0) - float(signal.get("short_score") or 0))
+        if gap < float(settings.get("min_score_gap", 25)):
+            return None, "v2_direction_gap_too_small"
+        if float(signal.get("lana_score") or 0) < float(settings.get("min_lana_score", 72)):
+            return None, "v2_lana_score_too_low"
+        if str(signal.get("model") or "rules") == "rules":
+            return None, "v2_ai_confirmation_required"
+
+        rsi = float(signal.get("rsi") or 50)
+        if direction == "LONG" and not 45 <= rsi <= 75:
+            return None, "v2_long_rsi_outside_range"
+        if direction == "SHORT" and not 25 <= rsi <= 55:
+            return None, "v2_short_rsi_outside_range"
+        volume_ratio = float(signal.get("vol_ratio") or 1)
+        if not 0.8 <= volume_ratio <= 3.5:
+            return None, "v2_volume_outside_range"
+        abs_change = abs(float(signal.get("change_24h") or 0))
+        if abs_change > float(settings.get("max_abs_change_24h", 25)):
+            return None, "v2_no_extreme_chasing"
+        if abs_change >= float(settings.get("half_size_change_24h", 15)):
+            size_multiplier = 0.5
+
+        candle_ts = signal.get("candle_close_ts")
+        if candle_ts:
+            try:
+                candle_dt = datetime.fromtimestamp(float(candle_ts) / 1000, timezone.utc)
+                age_minutes = (datetime.now(timezone.utc) - candle_dt).total_seconds() / 60
+                if age_minutes > float(settings.get("max_signal_age_minutes", 90)):
+                    return None, "v2_signal_stale"
+            except (TypeError, ValueError, OSError):
+                return None, "v2_invalid_signal_time"
     if any(t.get("signal_id") == signal_id for t in book["trades"]):
         return None, "duplicate_signal"
     open_trades = [t for t in book["trades"] if t.get("status") == "OPEN"]
@@ -140,6 +180,9 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
         return None, "max_open_positions"
     if any(t.get("coin") == coin for t in open_trades):
         return None, "coin_already_open"
+    same_direction = sum(1 for t in open_trades if t.get("direction") == direction)
+    if same_direction >= int(settings.get("max_same_direction", 2)):
+        return None, "v2_same_direction_limit"
 
     now_dt = datetime.now(timezone.utc)
     recent_coin_stops = []
@@ -175,7 +218,7 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
 
     fixed_margin = float(settings.get("fixed_margin") or 0)
     if fixed_margin > 0:
-        notional = fixed_margin * float(settings["leverage"])
+        notional = fixed_margin * size_multiplier * float(settings["leverage"])
         quantity = notional / fill_entry
         risk_amount = quantity * stop_distance
     else:
@@ -203,6 +246,7 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
         "notional": notional,
         "margin": notional / float(settings["leverage"]),
         "risk_amount": risk_amount,
+        "size_multiplier": size_multiplier,
         "realized_pnl": 0.0,
         "fees": 0.0,
         "unrealized_pnl": 0.0,
