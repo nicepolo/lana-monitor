@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from paper_trading import mark_positions, new_book, open_trade, record_signal
 
@@ -58,6 +58,28 @@ class PaperTradingTests(unittest.TestCase):
         self.assertEqual(trade["status"], "CLOSED")
         self.assertEqual(trade["exit_reason"], "STOP_LOSS")
         self.assertLess(trade["realized_pnl"], 0)
+
+    def test_fixed_margin_matches_real_account_style(self):
+        self.book["settings"].update({"fixed_margin": 45, "leverage": 8})
+        trade, _ = open_trade(self.book, self.signal)
+        self.assertAlmostEqual(trade["margin"], 45, places=6)
+        self.assertAlmostEqual(trade["notional"], 360, places=6)
+
+    def test_coin_cannot_reenter_during_stop_cooldown(self):
+        trade, _ = open_trade(self.book, self.signal)
+        mark_positions(self.book, {"TEST": 94}, datetime.now(timezone.utc))
+        retry = dict(self.signal, signal_id="signal-2")
+        reopened, reason = open_trade(self.book, retry)
+        self.assertIsNone(reopened)
+        self.assertEqual(reason, "coin_stop_cooldown")
+
+    def test_six_hour_time_stop_only_closes_weak_trade(self):
+        self.book["settings"].update({"time_stop_hours": 6, "time_stop_min_r": 0.3})
+        trade, _ = open_trade(self.book, self.signal)
+        trade["opened_at"] = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat()
+        mark_positions(self.book, {"TEST": 101}, datetime.now(timezone.utc))
+        self.assertEqual(trade["status"], "CLOSED")
+        self.assertEqual(trade["exit_reason"], "TIME_STOP")
 
 
 if __name__ == "__main__":

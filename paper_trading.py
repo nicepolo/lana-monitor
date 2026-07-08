@@ -14,15 +14,22 @@ _LOCK = threading.RLock()
 
 
 DEFAULT_SETTINGS = {
-    "capital": 10000.0,
-    "risk_pct": 0.5,
+    "capital": 800.0,
+    "risk_pct": 1.5,
+    "fixed_margin": 45.0,
     "min_signal_score": 70,
     "max_open_positions": 3,
-    "leverage": 3.0,
+    "leverage": 8.0,
     "fee_rate": 0.0005,
     "slippage_rate": 0.0005,
     "trailing_pct": 0.02,
     "max_hold_hours": 24,
+    "time_stop_hours": 6,
+    "time_stop_min_r": 0.3,
+    "stop_cooldown_hours": 8,
+    "max_coin_stops_24h": 2,
+    "tp1_fraction": 0.4,
+    "tp2_fraction": 0.4,
 }
 
 
@@ -134,6 +141,23 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
     if any(t.get("coin") == coin for t in open_trades):
         return None, "coin_already_open"
 
+    now_dt = datetime.now(timezone.utc)
+    recent_coin_stops = []
+    for prior in book["trades"]:
+        if prior.get("coin") != coin or prior.get("exit_reason") != "STOP_LOSS":
+            continue
+        try:
+            closed_at = datetime.fromisoformat(prior["closed_at"])
+            age_hours = (now_dt - closed_at).total_seconds() / 3600
+        except (KeyError, TypeError, ValueError):
+            continue
+        if age_hours < 24:
+            recent_coin_stops.append(age_hours)
+    if len(recent_coin_stops) >= int(settings.get("max_coin_stops_24h", 2)):
+        return None, "coin_stopped_twice_24h"
+    if recent_coin_stops and min(recent_coin_stops) < float(settings.get("stop_cooldown_hours", 8)):
+        return None, "coin_stop_cooldown"
+
     entry = float(signal.get("entry_zone") or 0)
     stop = float(signal.get("stop_loss") or 0)
     target_1 = float(signal.get("target_1") or 0)
@@ -149,9 +173,15 @@ def open_trade(book: Dict[str, Any], signal: Dict[str, Any]) -> Tuple[Optional[D
     if stop_distance <= 0:
         return None, "zero_stop_distance"
 
-    risk_amount = float(settings["capital"]) * float(settings["risk_pct"]) / 100
-    quantity = risk_amount / stop_distance
-    notional = quantity * fill_entry
+    fixed_margin = float(settings.get("fixed_margin") or 0)
+    if fixed_margin > 0:
+        notional = fixed_margin * float(settings["leverage"])
+        quantity = notional / fill_entry
+        risk_amount = quantity * stop_distance
+    else:
+        risk_amount = float(settings["capital"]) * float(settings["risk_pct"]) / 100
+        quantity = risk_amount / stop_distance
+        notional = quantity * fill_entry
     now = _now()
     trade = {
         "trade_id": uuid.uuid4().hex[:16],
@@ -249,19 +279,36 @@ def mark_positions(book: Dict[str, Any], prices: Dict[str, float], now: Optional
 
         tp1_hit = price >= trade["target_1"] if is_long else price <= trade["target_1"]
         if not trade["tp1_hit"] and tp1_hit:
-            _close_quantity(book, trade, trade["original_qty"] * 0.5, trade["target_1"], "TAKE_PROFIT_1")
+            _close_quantity(
+                book, trade, trade["original_qty"] * float(settings.get("tp1_fraction", 0.4)),
+                trade["target_1"], "TAKE_PROFIT_1",
+            )
             trade["tp1_hit"] = True
             fee_buffer = float(settings["fee_rate"]) * 2 + float(settings["slippage_rate"]) * 2
             trade["stop_loss"] = trade["entry_price"] * (1 + fee_buffer if is_long else 1 - fee_buffer)
 
         tp2_hit = price >= trade["target_2"] if is_long else price <= trade["target_2"]
         if trade["status"] == "OPEN" and not trade["tp2_hit"] and tp2_hit:
-            _close_quantity(book, trade, trade["original_qty"] * 0.3, trade["target_2"], "TAKE_PROFIT_2")
+            _close_quantity(
+                book, trade, trade["original_qty"] * float(settings.get("tp2_fraction", 0.4)),
+                trade["target_2"], "TAKE_PROFIT_2",
+            )
             trade["tp2_hit"] = True
 
         opened_at = datetime.fromisoformat(trade["opened_at"])
         age_hours = (now - opened_at).total_seconds() / 3600
-        if trade["status"] == "OPEN" and age_hours >= float(settings["max_hold_hours"]):
+        initial_risk = max(float(trade.get("risk_amount") or 0), 1e-12)
+        gross_all = (
+            (price - trade["entry_price"]) * trade["original_qty"]
+            if is_long else (trade["entry_price"] - price) * trade["original_qty"]
+        )
+        current_r = gross_all / initial_risk
+        time_stop_due = (
+            age_hours >= float(settings.get("time_stop_hours", 6))
+            and current_r < float(settings.get("time_stop_min_r", 0.3))
+        )
+        hard_stop_due = age_hours >= float(settings["max_hold_hours"])
+        if trade["status"] == "OPEN" and (time_stop_due or hard_stop_due):
             _close_quantity(book, trade, trade["remaining_qty"], price, "TIME_STOP")
             continue
 
