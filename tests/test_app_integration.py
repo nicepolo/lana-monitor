@@ -100,7 +100,7 @@ class AppIntegrationTests(unittest.TestCase):
         self.assertEqual(result["arbiter_reason"], "live_entry_price_unavailable")
         self.assertEqual(result["entry_zone"], 0)
 
-    def test_ai_signal_uses_okx_when_binance_live_price_is_unavailable(self):
+    def test_ai_signal_does_not_use_okx_when_binance_live_price_is_unavailable(self):
         snapshot = {
             "rsi": 60, "vol_ratio": 1.8, "funding_rate": 0.01,
             "ma_bull": True, "bb_position": "upper_half", "price": 100,
@@ -113,21 +113,16 @@ class AppIntegrationTests(unittest.TestCase):
             "candle_close_ts": 1234567890000,
         }
 
-        def live_quote(_coin, exchange):
-            if exchange == "BINANCE":
-                raise ValueError("binance unavailable")
-            return {"price": 100.5, "price_source": "OKX_LIVE", "price_ts": 123}
-
         with patch.object(app, "analyze_coin", return_value=snapshot), \
              patch.object(app, "fetch_klines", return_value=[]), \
-             patch.object(app, "fetch_position_price", side_effect=live_quote), \
+             patch.object(app, "fetch_position_price", side_effect=ValueError("binance unavailable")), \
              patch.object(app, "PAPER_TRADING_ENABLED", False), \
              patch.dict(app.os.environ, {"GEMINI_API_KEY": "", "ANTHROPIC_API_KEY": ""}):
             result = app._do_ai_analyze("TEST", 100, 9)
 
-        self.assertEqual(result["direction"], "LONG")
-        self.assertEqual(result["price_source"], "OKX_LIVE")
-        self.assertAlmostEqual(result["entry_zone"], 100.5)
+        self.assertEqual(result["direction"], "WATCH")
+        self.assertEqual(result["arbiter_reason"], "live_entry_price_unavailable")
+        self.assertNotEqual(result["price_source"], "OKX_LIVE")
 
     def test_position_monitor_uses_live_quote_not_closed_candle_price(self):
         store = new_store()
