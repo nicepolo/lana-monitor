@@ -103,6 +103,7 @@ POSITION_SETTINGS = {
 }
 POSITION_DEFAULT_EXCHANGE = os.environ.get("POSITION_DEFAULT_EXCHANGE", "BINANCE").upper()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "700"))
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 _ai_provider_status = {
     "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None},
@@ -1992,7 +1993,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300,
+                      "generationConfig": {"temperature": 0.2, "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
                                            "responseMimeType": "application/json"}},
                 timeout=25
             )
@@ -2650,6 +2651,7 @@ def api_ai_status():
             "gemini_api_key_present": gemini_configured,
             "gemini_api_key_length": len(gemini_key),
             "gemini_related_env_names": gemini_env_names,
+            "gemini_max_output_tokens": GEMINI_MAX_OUTPUT_TOKENS,
         },
     })
 
