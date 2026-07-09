@@ -1789,7 +1789,13 @@ def _provider_error_category(response=None, error=None):
 def _record_provider_status(provider, error=None):
     stamp = datetime.now(timezone.utc).isoformat()
     if error:
-        _ai_provider_status[provider]["last_error"] = {"category": error, "ts": stamp}
+        if isinstance(error, dict):
+            payload = dict(error)
+            payload.setdefault("category", "request_error")
+            payload["ts"] = stamp
+            _ai_provider_status[provider]["last_error"] = payload
+        else:
+            _ai_provider_status[provider]["last_error"] = {"category": error, "ts": stamp}
     else:
         _ai_provider_status[provider]["last_success"] = stamp
         _ai_provider_status[provider]["last_error"] = None
@@ -1808,7 +1814,7 @@ def _fallback_reason_text(provider_errors):
     }
     provider_names = {"gemini": "Gemini", "claude": "Claude"}
     return "；".join(
-        f"{provider_names.get(name, name)}：{labels.get(reason, reason)}"
+        f"{provider_names.get(name, name)}：{labels.get(reason.get('category') if isinstance(reason, dict) else reason, reason.get('category') if isinstance(reason, dict) else reason)}"
         for name, reason in provider_errors.items()
     )
 
@@ -2023,7 +2029,8 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                 jr = r.json()
                 cands = jr.get("candidates", [])
                 if cands:
-                    parts = cands[0].get("content", {}).get("parts", [])
+                    cand0 = cands[0]
+                    parts = cand0.get("content", {}).get("parts", [])
                     text = "".join(p.get("text", "") for p in parts)
                     text = text.strip().replace("```json","").replace("```","").strip()
                     if text:
@@ -2034,13 +2041,29 @@ def _do_ai_analyze(coin, price=0, change24h=0):
                             result["model"] = GEMINI_MODEL
                             _record_provider_status("gemini")
                         except Exception as je:
-                            provider_errors["gemini"] = "invalid_response"
+                            provider_errors["gemini"] = {
+                                "category": "invalid_response",
+                                "detail": "json_parse_failed",
+                                "finishReason": cand0.get("finishReason"),
+                                "text_len": len(text),
+                                "preview": text[:120],
+                            }
                             print(f"[Gemini] JSON解析失敗 {coin}: {je} | text={text[:100]}")
                     else:
-                        provider_errors["gemini"] = "invalid_response"
+                        provider_errors["gemini"] = {
+                            "category": "invalid_response",
+                            "detail": "empty_text",
+                            "finishReason": cand0.get("finishReason"),
+                            "candidate_keys": list(cand0.keys()),
+                        }
                         print(f"[Gemini] 回傳空白 {coin}: finishReason={cands[0].get('finishReason')}")
                 else:
-                    provider_errors["gemini"] = "invalid_response"
+                    provider_errors["gemini"] = {
+                        "category": "invalid_response",
+                        "detail": "no_candidates",
+                        "response_keys": list(jr.keys()),
+                        "promptFeedback": jr.get("promptFeedback"),
+                    }
                     print(f"[Gemini] 無candidates {coin}: {jr}")
             else:
                 provider_errors["gemini"] = request_error or _provider_error_category(response=r)
