@@ -73,7 +73,7 @@ PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
     "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
     "fixed_margin": float(os.environ.get("PAPER_FIXED_MARGIN", "45")),
-    "min_signal_score": int(os.environ.get("PAPER_MIN_SIGNAL_SCORE", "70")),
+    "min_signal_score": int(os.environ.get("PAPER_MIN_SIGNAL_SCORE", "65")),
     "max_open_positions": int(os.environ.get("PAPER_MAX_OPEN_POSITIONS", "3")),
     "leverage": float(os.environ.get("PAPER_LEVERAGE", "8")),
     "fee_rate": float(os.environ.get("PAPER_FEE_RATE", "0.0005")),
