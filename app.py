@@ -1835,7 +1835,7 @@ def _post_ai(url, **kwargs):
     return response, error
 
 
-def _do_ai_analyze(coin, price=0, change24h=0):
+def _do_ai_analyze(coin, price=0, change24h=0, force=False):
     """AI 分析核心邏輯，可直接被 webhook 呼叫（避免 HTTP loopback deadlock）"""
     now_ts = time.time()
 
@@ -1919,7 +1919,7 @@ def _do_ai_analyze(coin, price=0, change24h=0):
 
     signal_id = rule_decision.get("signal_id")
     cached = _ai_analyze_cache.get(signal_id)
-    if cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
+    if not force and cached and (now_ts - cached["ts"]) < AI_ANALYZE_COOLDOWN_SEC:
         return apply_entry_guard(cached["result"])
     if not live_price_available:
         result = apply_entry_guard({
@@ -2172,11 +2172,12 @@ def api_ai_analyze():
         coin      = body.get("symbol", "").upper()
         price     = float(body.get("price", 0))
         change24h = float(body.get("change_24h", 0))
+        force     = bool(body.get("force") or body.get("reanalyze"))
 
         if not coin:
             return jsonify({"error": "symbol required"}), 400
 
-        result = _do_ai_analyze(coin, price, change24h)
+        result = _do_ai_analyze(coin, price, change24h, force=force)
         resp = jsonify(result)
         resp.headers["Access-Control-Allow-Origin"] = "*"
         return resp
