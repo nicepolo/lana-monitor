@@ -2628,11 +2628,30 @@ def api_positions_monitor():
 
 @app.route("/api/ai/status", methods=["GET"])
 def api_ai_status():
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    claude_key = os.getenv("ANTHROPIC_API_KEY", "")
+    gemini_configured = bool(gemini_key.strip())
+    claude_configured = bool(claude_key.strip())
+    gemini_env_names = sorted(k for k in os.environ.keys() if "GEMINI" in k.upper())
     providers = {
-        "gemini": dict(_ai_provider_status["gemini"], configured=bool(os.getenv("GEMINI_API_KEY", ""))),
-        "claude": dict(_ai_provider_status["claude"], configured=bool(os.getenv("ANTHROPIC_API_KEY", ""))),
+        "gemini": dict(_ai_provider_status["gemini"], configured=gemini_configured),
+        "claude": dict(
+            _ai_provider_status["claude"],
+            configured=claude_configured,
+            fallback_enabled=CLAUDE_FALLBACK_ENABLED,
+        ),
     }
-    return jsonify({"ok": True, "providers": providers})
+    return jsonify({
+        "ok": True,
+        "providers": providers,
+        "effective_ai_available": gemini_configured or (claude_configured and CLAUDE_FALLBACK_ENABLED),
+        "primary_provider": "gemini",
+        "env_diagnostics": {
+            "gemini_api_key_present": gemini_configured,
+            "gemini_api_key_length": len(gemini_key),
+            "gemini_related_env_names": gemini_env_names,
+        },
+    })
 
 
 @app.route("/health")
