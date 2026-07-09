@@ -103,7 +103,7 @@ POSITION_SETTINGS = {
 }
 POSITION_DEFAULT_EXCHANGE = os.environ.get("POSITION_DEFAULT_EXCHANGE", "BINANCE").upper()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "700"))
+GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "1200"))
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 _ai_provider_status = {
     "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None},
@@ -1989,12 +1989,34 @@ def _do_ai_analyze(coin, price=0, change24h=0):
 
     if gemini_key:
         try:
+            gemini_response_schema = {
+                "type": "OBJECT",
+                "properties": {
+                    "direction": {"type": "STRING", "enum": ["LONG", "SHORT", "WATCH"]},
+                    "score": {"type": "NUMBER"},
+                    "confidence": {"type": "STRING", "enum": ["高", "中", "低"]},
+                    "summary": {"type": "STRING"},
+                    "reason": {"type": "STRING"},
+                    "entry_zone": {"type": "NUMBER"},
+                    "stop_loss": {"type": "NUMBER"},
+                    "target_1": {"type": "NUMBER"},
+                    "target_2": {"type": "NUMBER"},
+                    "timeframe": {"type": "STRING"},
+                    "risk_note": {"type": "STRING"},
+                },
+                "required": [
+                    "direction", "score", "confidence", "summary", "reason",
+                    "entry_zone", "stop_loss", "target_1", "target_2",
+                    "timeframe", "risk_note",
+                ],
+            }
             r, request_error = _post_ai(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
                 headers={"Content-Type": "application/json", "x-goog-api-key": gemini_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"temperature": 0.2, "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
-                                           "responseMimeType": "application/json"}},
+                                           "responseMimeType": "application/json",
+                                           "responseSchema": gemini_response_schema}},
                 timeout=25
             )
             if r.ok:
