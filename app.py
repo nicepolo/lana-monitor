@@ -2324,10 +2324,14 @@ def telegram_webhook():
                         conf  = "高 🔥" if score >= 80 else "中 ✅" if score >= 65 else "低 ⚠️"
                         entry = res.get("entry_zone",""); sl = res.get("stop_loss","")
                         t1 = res.get("target_1",""); t2 = res.get("target_2","")
+                        model = str(res.get("model") or "").lower()
+                        is_rules_mode = model == "rules"
 
                         # 綜合判定橫幅（跟網頁版一致）
                         lana_score = res.get("lana_score", 0)
-                        if direction == "LONG" and lana_score >= 55:
+                        if is_rules_mode:
+                            verdict = "🟡 僅供觀察 — Gemini 未啟用，目前是規則模式，不建議下單"
+                        elif direction == "LONG" and lana_score >= 55:
                             verdict = "🟢 可考慮進場 — AI與技術指標雙重確認看多"
                         elif direction == "SHORT" and lana_score >= 55:
                             verdict = "🟢 可考慮進場 — AI與技術指標雙重確認看空"
@@ -2343,17 +2347,19 @@ def telegram_webhook():
                         lines = [
                             f"{dir_emoji} <b>{coin}/USDT 深度分析</b>",
                             f"\n{verdict}\n",
-                            f"方向: {dir_text}  信心: {conf}  AI分數: {score}/100",
+                            f"方向: {dir_text}  信心: {conf}  {'觀察分數' if is_rules_mode else 'AI分數'}: {score}/100",
                             f"\n📌 {_html.escape(str(res.get('summary','')))}" if res.get("summary") else "",
                             f"<i>{_html.escape(str(res.get('reason','')))}</i>" if res.get("reason") else "",
                             f"\n🎯 入場: {entry}\n🔴 止損: {sl}\n✅ 目標1: {t1}\n🏆 目標2: {t2}" if entry else "",
                             f"⏱ 持倉: {res.get('timeframe','4-8小時')}\n⚠️ {_html.escape(str(res.get('risk_note','嚴控倉位')))}",
                             f"\n⏰ {datetime.now(taipei).strftime('%H:%M')}"
                         ]
+                        if is_rules_mode:
+                            lines.insert(-1, "🚫 AI 未啟用時不提供「已下單追蹤」按鈕，請先修好 Gemini 後再用訊號下單。")
                         keyboard = [[
                             {"text": "🔄 重新分析", "callback_data": f"reanalyze:{coin}"},
                         ]]
-                        if res.get("signal_id") and direction in ("LONG", "SHORT"):
+                        if res.get("signal_id") and direction in ("LONG", "SHORT") and not is_rules_mode:
                             keyboard.insert(0, [{
                                 "text": "✅ 已下單，開始追蹤",
                                 "callback_data": f"entered:{res.get('signal_id')}",
