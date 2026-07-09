@@ -2379,7 +2379,7 @@ def telegram_webhook():
                         # 綜合判定橫幅（跟網頁版一致）
                         lana_score = res.get("lana_score", 0)
                         if is_rules_mode:
-                            verdict = "🟡 僅供觀察 — Gemini 未啟用，目前是規則模式，不建議下單"
+                            verdict = "🟡 僅供觀察 — Gemini 暫時無法使用，目前是規則模式，不建議下單"
                         elif direction == "LONG" and lana_score >= 55:
                             verdict = "🟢 可考慮進場 — AI與技術指標雙重確認看多"
                         elif direction == "SHORT" and lana_score >= 55:
@@ -2404,7 +2404,7 @@ def telegram_webhook():
                             f"\n⏰ {datetime.now(taipei).strftime('%H:%M')}"
                         ]
                         if is_rules_mode:
-                            lines.insert(-1, "🚫 AI 未啟用時不提供「已下單追蹤」按鈕，請先修好 Gemini 後再用訊號下單。")
+                            lines.insert(-1, "🚫 Gemini 限流或忙碌時不提供「已下單追蹤」按鈕，請等 Gemini 恢復後再用訊號下單。")
                         keyboard = [[
                             {"text": "🔄 重新分析", "callback_data": f"reanalyze:{coin}"},
                         ]]
