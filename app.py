@@ -103,7 +103,7 @@ POSITION_SETTINGS = {
 }
 POSITION_DEFAULT_EXCHANGE = os.environ.get("POSITION_DEFAULT_EXCHANGE", "BINANCE").upper()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "1200"))
+GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 _ai_provider_status = {
     "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None},
@@ -1985,6 +1985,8 @@ def _do_ai_analyze(coin, price=0, change24h=0):
 做空參考價位：止損 {sl_short}，目標1 {t1_short}，目標2 {t2_short}
 
 請給出明確交易建議。entry_zone/stop_loss/target_1/target_2 必須是真實數字。
+請務必精簡：summary 最多 20 字；reason 最多 45 字；risk_note 最多 30 字；timeframe 最多 10 字。
+不要輸出 Markdown，不要換行，不要解釋 JSON 以外的文字。
 只輸出JSON：
 {{"direction":"LONG或SHORT或WATCH","score":0-100,"confidence":"高或中或低","summary":"一句話","reason":"技術原因","entry_zone":數字,"stop_loss":數字,"target_1":數字,"target_2":數字,"timeframe":"持倉時間","risk_note":"風險"}}"""
 
