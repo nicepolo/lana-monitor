@@ -69,6 +69,8 @@ POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MAX_ENTRY_DRIFT_PCT = float(os.environ.get("MAX_ENTRY_DRIFT_PCT", "2.0"))
 CLAUDE_FALLBACK_ENABLED = os.environ.get("CLAUDE_FALLBACK_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR = int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR", "8"))
+CLAUDE_FALLBACK_MAX_CALLS_PER_DAY = int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_DAY", "40"))
 PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
     "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
@@ -110,6 +112,7 @@ _ai_provider_status = {
     "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None, "cooldown_until": None},
     "claude": {"model": ANTHROPIC_MODEL, "last_success": None, "last_error": None, "cooldown_until": None},
 }
+_claude_fallback_call_ts = []
 
 
 def _paper_paths():
@@ -1814,6 +1817,26 @@ def _provider_cooldown_remaining(provider):
     return max(0, int(until - time.time()))
 
 
+def _claude_fallback_usage():
+    now = time.time()
+    day_ago = now - 24 * 3600
+    hour_ago = now - 3600
+    _claude_fallback_call_ts[:] = [ts for ts in _claude_fallback_call_ts if ts >= day_ago]
+    used_hour = sum(1 for ts in _claude_fallback_call_ts if ts >= hour_ago)
+    used_day = len(_claude_fallback_call_ts)
+    return {
+        "used_hour": used_hour,
+        "used_day": used_day,
+        "max_hour": CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR,
+        "max_day": CLAUDE_FALLBACK_MAX_CALLS_PER_DAY,
+        "allowed": used_hour < CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR and used_day < CLAUDE_FALLBACK_MAX_CALLS_PER_DAY,
+    }
+
+
+def _record_claude_fallback_call():
+    _claude_fallback_call_ts.append(time.time())
+
+
 def _fallback_reason_text(provider_errors):
     labels = {
         "not_configured": "未設定金鑰",
@@ -2097,8 +2120,18 @@ def _do_ai_analyze(coin, price=0, change24h=0, force=False):
     else:
         provider_errors["gemini"] = "not_configured"
 
-    if not result and anthropic_key and CLAUDE_FALLBACK_ENABLED:
+    claude_usage = _claude_fallback_usage()
+    if not result and anthropic_key and CLAUDE_FALLBACK_ENABLED and not claude_usage["allowed"]:
+        provider_errors["claude"] = {
+            "category": "fallback_budget_limited",
+            "used_hour": claude_usage["used_hour"],
+            "max_hour": claude_usage["max_hour"],
+            "used_day": claude_usage["used_day"],
+            "max_day": claude_usage["max_day"],
+        }
+    elif not result and anthropic_key and CLAUDE_FALLBACK_ENABLED:
         try:
+            _record_claude_fallback_call()
             r, request_error = _post_ai(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
@@ -2702,6 +2735,7 @@ def api_ai_status():
     claude_configured = bool(claude_key.strip())
     gemini_env_names = sorted(k for k in os.environ.keys() if "GEMINI" in k.upper())
     gemini_cooldown_remaining = _provider_cooldown_remaining("gemini")
+    claude_usage = _claude_fallback_usage()
     providers = {
         "gemini": dict(
             _ai_provider_status["gemini"],
@@ -2712,6 +2746,7 @@ def api_ai_status():
             _ai_provider_status["claude"],
             configured=claude_configured,
             fallback_enabled=CLAUDE_FALLBACK_ENABLED,
+            fallback_usage=claude_usage,
         ),
     }
     return jsonify({
@@ -2725,6 +2760,8 @@ def api_ai_status():
             "gemini_related_env_names": gemini_env_names,
             "gemini_max_output_tokens": GEMINI_MAX_OUTPUT_TOKENS,
             "gemini_rate_limit_cooldown_sec": GEMINI_RATE_LIMIT_COOLDOWN_SEC,
+            "claude_fallback_max_calls_per_hour": CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR,
+            "claude_fallback_max_calls_per_day": CLAUDE_FALLBACK_MAX_CALLS_PER_DAY,
         },
     })
 
