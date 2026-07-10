@@ -69,8 +69,8 @@ POSITIONS_FILE   = '/data/manual_positions.json'
 PAPER_TRADING_ENABLED = os.environ.get("PAPER_TRADING_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 MAX_ENTRY_DRIFT_PCT = float(os.environ.get("MAX_ENTRY_DRIFT_PCT", "2.0"))
 CLAUDE_FALLBACK_ENABLED = os.environ.get("CLAUDE_FALLBACK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR = int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR", "8"))
-CLAUDE_FALLBACK_MAX_CALLS_PER_DAY = int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_DAY", "40"))
+CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR = max(int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_HOUR", "15")), 15)
+CLAUDE_FALLBACK_MAX_CALLS_PER_DAY = max(int(os.environ.get("CLAUDE_FALLBACK_MAX_CALLS_PER_DAY", "80")), 80)
 PAPER_SETTINGS = {
     "capital": float(os.environ.get("PAPER_CAPITAL", "800")),
     "risk_pct": float(os.environ.get("PAPER_RISK_PCT", "1.5")),
