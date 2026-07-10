@@ -104,10 +104,11 @@ POSITION_SETTINGS = {
 POSITION_DEFAULT_EXCHANGE = os.environ.get("POSITION_DEFAULT_EXCHANGE", "BINANCE").upper()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+GEMINI_RATE_LIMIT_COOLDOWN_SEC = int(os.environ.get("GEMINI_RATE_LIMIT_COOLDOWN_SEC", "1800"))
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 _ai_provider_status = {
-    "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None},
-    "claude": {"model": ANTHROPIC_MODEL, "last_success": None, "last_error": None},
+    "gemini": {"model": GEMINI_MODEL, "last_success": None, "last_error": None, "cooldown_until": None},
+    "claude": {"model": ANTHROPIC_MODEL, "last_success": None, "last_error": None, "cooldown_until": None},
 }
 
 
@@ -1795,10 +1796,22 @@ def _record_provider_status(provider, error=None):
             payload["ts"] = stamp
             _ai_provider_status[provider]["last_error"] = payload
         else:
-            _ai_provider_status[provider]["last_error"] = {"category": error, "ts": stamp}
+            payload = {"category": error, "ts": stamp}
+            _ai_provider_status[provider]["last_error"] = payload
+        category = _ai_provider_status[provider]["last_error"].get("category")
+        if provider == "gemini" and category == "rate_limited":
+            _ai_provider_status[provider]["cooldown_until"] = time.time() + GEMINI_RATE_LIMIT_COOLDOWN_SEC
     else:
         _ai_provider_status[provider]["last_success"] = stamp
         _ai_provider_status[provider]["last_error"] = None
+        _ai_provider_status[provider]["cooldown_until"] = None
+
+
+def _provider_cooldown_remaining(provider):
+    until = _ai_provider_status.get(provider, {}).get("cooldown_until")
+    if not until:
+        return 0
+    return max(0, int(until - time.time()))
 
 
 def _fallback_reason_text(provider_errors):
@@ -1995,7 +2008,13 @@ def _do_ai_analyze(coin, price=0, change24h=0, force=False):
     result = None
     provider_errors = {}
 
-    if gemini_key:
+    gemini_cooldown_remaining = _provider_cooldown_remaining("gemini")
+    if gemini_key and gemini_cooldown_remaining > 0:
+        provider_errors["gemini"] = {
+            "category": "cooldown_after_rate_limit",
+            "remaining_sec": gemini_cooldown_remaining,
+        }
+    elif gemini_key:
         try:
             gemini_response_schema = {
                 "type": "OBJECT",
@@ -2682,8 +2701,13 @@ def api_ai_status():
     gemini_configured = bool(gemini_key.strip())
     claude_configured = bool(claude_key.strip())
     gemini_env_names = sorted(k for k in os.environ.keys() if "GEMINI" in k.upper())
+    gemini_cooldown_remaining = _provider_cooldown_remaining("gemini")
     providers = {
-        "gemini": dict(_ai_provider_status["gemini"], configured=gemini_configured),
+        "gemini": dict(
+            _ai_provider_status["gemini"],
+            configured=gemini_configured,
+            cooldown_remaining_sec=gemini_cooldown_remaining,
+        ),
         "claude": dict(
             _ai_provider_status["claude"],
             configured=claude_configured,
@@ -2693,13 +2717,14 @@ def api_ai_status():
     return jsonify({
         "ok": True,
         "providers": providers,
-        "effective_ai_available": gemini_configured or (claude_configured and CLAUDE_FALLBACK_ENABLED),
+        "effective_ai_available": (gemini_configured and gemini_cooldown_remaining <= 0) or (claude_configured and CLAUDE_FALLBACK_ENABLED),
         "primary_provider": "gemini",
         "env_diagnostics": {
             "gemini_api_key_present": gemini_configured,
             "gemini_api_key_length": len(gemini_key),
             "gemini_related_env_names": gemini_env_names,
             "gemini_max_output_tokens": GEMINI_MAX_OUTPUT_TOKENS,
+            "gemini_rate_limit_cooldown_sec": GEMINI_RATE_LIMIT_COOLDOWN_SEC,
         },
     })
 
