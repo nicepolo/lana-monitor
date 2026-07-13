@@ -255,10 +255,18 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, float]:
-    """Create deterministic 1R/2R levels using structure and ATR, capped at 5%."""
+    """建立進出場價位：突破確認入場 + 現價限價備選。
+
+    做多：entry_zone = 近期高點 * 1.002（突破確認），entry_limit = 現價 * 0.995（限價備選）
+    做空：entry_zone = 近期低點 * 0.998（跌破確認），entry_limit = 現價 * 1.005（限價備選）
+    止損用 ATR * 1.5 或結構低/高點，最多 5%。
+    """
     price = _number(features.get("price"))
     if price <= 0 or direction not in ("LONG", "SHORT"):
-        return {"entry_zone": 0.0, "stop_loss": 0.0, "target_1": 0.0, "target_2": 0.0}
+        return {
+            "entry_zone": 0.0, "entry_limit": 0.0,
+            "stop_loss": 0.0, "target_1": 0.0, "target_2": 0.0
+        }
 
     atr_value = _number(features.get("atr"), price * 0.02)
     recent_low = _number(features.get("recent_low"), price * 0.98)
@@ -267,12 +275,25 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
     max_distance = price * 0.05
 
     if direction == "LONG":
+        # 突破確認入場：近期高點 * 1.002（確認突破假突破風險低）
+        entry_breakout = round(recent_high * 1.002, 10)
+        # 限價備選：現價下方 0.5%（等小回調）
+        entry_limit = round(price * 0.995, 10)
+
+        # 止損：近期低點下方 0.2% 或 ATR*1.5，取較近的
         raw_stop = min(price - 1.5 * atr_value, recent_low * 0.998)
         distance = max(min_distance, min(max_distance, price - raw_stop))
         stop = price - distance
         target_1 = price + distance
         target_2 = price + 2 * distance
-    else:
+
+    else:  # SHORT
+        # 跌破確認入場：近期低點 * 0.998（確認跌破）
+        entry_breakout = round(recent_low * 0.998, 10)
+        # 限價備選：現價上方 0.5%（等小反彈）
+        entry_limit = round(price * 1.005, 10)
+
+        # 止損：近期高點上方 0.2% 或 ATR*1.5，取較近的
         raw_stop = max(price + 1.5 * atr_value, recent_high * 1.002)
         distance = max(min_distance, min(max_distance, raw_stop - price))
         stop = price + distance
@@ -280,7 +301,8 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
         target_2 = price - 2 * distance
 
     return {
-        "entry_zone": round(price, 10),
+        "entry_zone": entry_breakout,    # 突破確認入場價（建議）
+        "entry_limit": entry_limit,       # 限價備選（現價附近掛單）
         "stop_loss": round(stop, 10),
         "target_1": round(target_1, 10),
         "target_2": round(target_2, 10),
@@ -312,12 +334,25 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         "strategy_version": rule_decision.get("strategy_version", STRATEGY_VERSION),
     })
 
-    # v2：AI 失效熔斷 — 純規則式不算 AI 確認，強制 WATCH
+    # v2：AI 失效警告模式 — 規則式評分照常顯示，但標記警告並清空進出場價
+    # 不完全熔斷，讓使用者還是能看到候選幣與規則判斷，但明確告知不可實單操作
     if ai_model == "rules":
-        result["direction"] = "WATCH"
-        result["score"] = min(rule_score, 50)  # 分數壓到50以下
-        result["arbiter_reason"] = "⚠️ AI 失效中，純規則式評分不推播"
         result["ai_circuit_breaker"] = True
+        result["ai_warning"] = "⚠️ AI 目前失效，以下為規則式評分，請勿實單操作"
+        # 清空進出場價（規則式給的數字不可靠）
+        result["entry_zone"] = 0.0
+        result["stop_loss"] = 0.0
+        result["target_1"] = 0.0
+        result["target_2"] = 0.0
+        # 方向和分數照常保留，讓使用者看到規則的判斷
+        if rule_direction == "WATCH":
+            result["direction"] = "WATCH"
+            result["score"] = rule_score
+            result["arbiter_reason"] = rule_decision.get("veto_reason") or "規則未形成方向"
+        else:
+            result["direction"] = rule_direction
+            result["score"] = rule_score
+            result["arbiter_reason"] = f"規則式評分（AI失效）: {rule_direction}"
         return result
 
     if rule_direction == "WATCH":
