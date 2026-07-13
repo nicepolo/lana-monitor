@@ -8,6 +8,11 @@ v2 改動：
 2. 距近期高點 < 5% 時 LONG 額外扣分（高位風險）
 3. AI 失效時 arbitrate_ai_result 強制 WATCH + 標記熔斷
 4. 多空差距門檻從 12 提高到 15，減少邊界幣被推播
+
+v3 改動：
+5. build_trade_levels 入場價改用現價±%，不再追近期高低點
+   做多：entry_zone = 現價 * 1.002，entry_limit = 現價 * 0.995
+   做空：entry_zone = 現價 * 0.998，entry_limit = 現價 * 1.005
 """
 
 from __future__ import annotations
@@ -17,9 +22,7 @@ import json
 import math
 from typing import Any, Dict
 
-
-STRATEGY_VERSION = "lana-direction-v2"
-
+STRATEGY_VERSION = "lana-direction-v3"
 
 def _number(value: Any, default: float = 0.0) -> float:
     try:
@@ -27,7 +30,6 @@ def _number(value: Any, default: float = 0.0) -> float:
         return number if math.isfinite(number) else default
     except (TypeError, ValueError):
         return default
-
 
 def _canonical_features(features: Dict[str, Any]) -> Dict[str, Any]:
     """Keep only stable strategy inputs and round floats for repeatable hashes."""
@@ -44,7 +46,6 @@ def _canonical_features(features: Dict[str, Any]) -> Dict[str, Any]:
         stable[key] = value
     return stable
 
-
 def feature_hash(features: Dict[str, Any]) -> str:
     raw = json.dumps(
         _canonical_features(features), sort_keys=True, separators=(",", ":"),
@@ -52,14 +53,12 @@ def feature_hash(features: Dict[str, Any]) -> str:
     ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:16]
 
-
 def make_signal_id(features: Dict[str, Any]) -> str:
     coin = str(features.get("coin", "UNKNOWN")).upper()
     timeframe = str(features.get("timeframe", "1h"))
     candle_ts = str(features.get("candle_close_ts") or "unknown")
     seed = f"{STRATEGY_VERSION}|{coin}|{timeframe}|{candle_ts}"
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
-
 
 def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     """Return symmetric LONG/SHORT scores from a frozen feature snapshot."""
@@ -72,6 +71,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     ma7 = _number(features.get("ma7"))
     ma30 = _number(features.get("ma30"))
     ma120 = _number(features.get("ma120"))
+
     if ma7 and ma30 and ma120:
         if ma7 > ma30 > ma120:
             long_score += 35
@@ -173,6 +173,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     price = _number(features.get("price"))
     recent_high = _number(features.get("recent_high"))
     recent_low = _number(features.get("recent_low"))
+
     if price > 0 and recent_high > 0:
         pct_from_high = (price - recent_high) / recent_high * 100
         if pct_from_high >= -3:
@@ -212,6 +213,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
 
     long_score = int(max(0, min(100, round(long_score))))
     short_score = int(max(0, min(100, round(short_score))))
+
     best = max(long_score, short_score)
     gap = abs(long_score - short_score)
     direction = "LONG" if long_score > short_score else "SHORT"
@@ -253,12 +255,12 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     result["signal_id"] = make_signal_id(features)
     return result
 
-
 def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, float]:
-    """建立進出場價位：突破確認入場 + 現價限價備選。
+    """建立進出場價位：基於現價計算，不追近期高低點。
 
-    做多：entry_zone = 近期高點 * 1.002（突破確認），entry_limit = 現價 * 0.995（限價備選）
-    做空：entry_zone = 近期低點 * 0.998（跌破確認），entry_limit = 現價 * 1.005（限價備選）
+    v3 改動：入場價改用現價±%，確保訊號發出時即可執行。
+    做多：entry_zone = 現價 * 1.002（現價上方小突破），entry_limit = 現價 * 0.995（等回調掛單）
+    做空：entry_zone = 現價 * 0.998（現價下方小跌破），entry_limit = 現價 * 1.005（等反彈掛單）
     止損用 ATR * 1.5 或結構低/高點，最多 5%。
     """
     price = _number(features.get("price"))
@@ -271,12 +273,13 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
     atr_value = _number(features.get("atr"), price * 0.02)
     recent_low = _number(features.get("recent_low"), price * 0.98)
     recent_high = _number(features.get("recent_high"), price * 1.02)
+
     min_distance = price * 0.015
     max_distance = price * 0.05
 
     if direction == "LONG":
-        # 突破確認入場：近期高點 * 1.002（確認突破假突破風險低）
-        entry_breakout = round(recent_high * 1.002, 10)
+        # v3：現價上方 0.2%（小突破確認，立即可追）
+        entry_breakout = round(price * 1.002, 10)
         # 限價備選：現價下方 0.5%（等小回調）
         entry_limit = round(price * 0.995, 10)
 
@@ -288,8 +291,8 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
         target_2 = price + 2 * distance
 
     else:  # SHORT
-        # 跌破確認入場：近期低點 * 0.998（確認跌破）
-        entry_breakout = round(recent_low * 0.998, 10)
+        # v3：現價下方 0.2%（小跌破確認，立即可追）
+        entry_breakout = round(price * 0.998, 10)
         # 限價備選：現價上方 0.5%（等小反彈）
         entry_limit = round(price * 1.005, 10)
 
@@ -301,13 +304,12 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
         target_2 = price - 2 * distance
 
     return {
-        "entry_zone": entry_breakout,    # 突破確認入場價（建議）
-        "entry_limit": entry_limit,       # 限價備選（現價附近掛單）
+        "entry_zone": entry_breakout,   # 現價附近突破確認入場價
+        "entry_limit": entry_limit,      # 限價備選（回調/反彈掛單）
         "stop_loss": round(stop, 10),
         "target_1": round(target_1, 10),
         "target_2": round(target_2, 10),
     }
-
 
 def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]) -> Dict[str, Any]:
     """Apply the rule decision as authority and allow AI only to confirm/veto.
@@ -319,6 +321,7 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
     ai_direction = str(result.get("direction", "WATCH")).upper()
     ai_score = int(max(0, min(100, round(_number(result.get("score"), 50)))))
     ai_model = str(result.get("model", "unknown"))
+
     rule_direction = rule_decision.get("direction", "WATCH")
     rule_score = int(rule_decision.get("selected_score", 0))
 
@@ -334,17 +337,15 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         "strategy_version": rule_decision.get("strategy_version", STRATEGY_VERSION),
     })
 
-    # v2：AI 失效警告模式 — 規則式評分照常顯示，但標記警告並清空進出場價
-    # 不完全熔斷，讓使用者還是能看到候選幣與規則判斷，但明確告知不可實單操作
+    # v2：AI 失效警告模式
     if ai_model == "rules":
         result["ai_circuit_breaker"] = True
         result["ai_warning"] = "⚠️ AI 目前失效，以下為規則式評分，請勿實單操作"
-        # 清空進出場價（規則式給的數字不可靠）
         result["entry_zone"] = 0.0
         result["stop_loss"] = 0.0
         result["target_1"] = 0.0
         result["target_2"] = 0.0
-        # 方向和分數照常保留，讓使用者看到規則的判斷
+
         if rule_direction == "WATCH":
             result["direction"] = "WATCH"
             result["score"] = rule_score
