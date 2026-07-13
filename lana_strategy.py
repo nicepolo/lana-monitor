@@ -2,6 +2,12 @@
 
 The LLM may explain or veto a setup, but it is never allowed to reverse the
 direction selected from the frozen market snapshot in this module.
+
+v2 改動：
+1. RSI 超買（>70）時 LONG 分數明顯懲罰，避免追高
+2. 距近期高點 < 5% 時 LONG 額外扣分（高位風險）
+3. AI 失效時 arbitrate_ai_result 強制 WATCH + 標記熔斷
+4. 多空差距門檻從 12 提高到 15，減少邊界幣被推播
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ import math
 from typing import Any, Dict
 
 
-STRATEGY_VERSION = "lana-direction-v1"
+STRATEGY_VERSION = "lana-direction-v2"
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -51,8 +57,6 @@ def make_signal_id(features: Dict[str, Any]) -> str:
     coin = str(features.get("coin", "UNKNOWN")).upper()
     timeframe = str(features.get("timeframe", "1h"))
     candle_ts = str(features.get("candle_close_ts") or "unknown")
-    # One strategy decision per coin/candle. Live derivatives may change inside the
-    # hour, so feature_hash is stored for audit but must not create another signal.
     seed = f"{STRATEGY_VERSION}|{coin}|{timeframe}|{candle_ts}"
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
 
@@ -64,6 +68,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     long_reasons = []
     short_reasons = []
 
+    # ── MA 趨勢（35分）──
     ma7 = _number(features.get("ma7"))
     ma30 = _number(features.get("ma30"))
     ma120 = _number(features.get("ma120"))
@@ -88,6 +93,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
             short_score += 18
             short_reasons.append("短均線偏空（長均線不足）")
 
+    # ── 動能（24H 漲跌幅，20分）──
     change = _number(features.get("change_24h"))
     momentum_points = (
         20 if abs(change) >= 15 else
@@ -102,6 +108,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         short_score += momentum_points
         short_reasons.append(f"24H 負動能 {change:+.1f}%")
 
+    # ── RSI（15分）── v2：超買區對 LONG 施加懲罰
     rsi = _number(features.get("rsi"), 50.0)
     if 50 <= rsi < 68:
         long_score += 15
@@ -112,6 +119,14 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         long_score += 5
         long_reasons.append("RSI 超賣反彈候選")
 
+    # v2：RSI > 70 對 LONG 施加懲罰（追高風險）
+    if rsi >= 75:
+        long_score -= 15
+        long_reasons.append(f"⚠️ RSI={rsi:.0f} 嚴重超買，LONG 扣分")
+    elif rsi >= 70:
+        long_score -= 8
+        long_reasons.append(f"⚠️ RSI={rsi:.0f} 超買區，LONG 扣分")
+
     if 32 < rsi <= 50:
         short_score += 15
         short_reasons.append("RSI 空方健康區")
@@ -121,6 +136,15 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         short_score += 5
         short_reasons.append("RSI 超買回落候選")
 
+    # v2：RSI < 30 對 SHORT 施加懲罰（超賣反彈風險）
+    if rsi <= 25:
+        short_score -= 15
+        short_reasons.append(f"⚠️ RSI={rsi:.0f} 嚴重超賣，SHORT 扣分")
+    elif rsi <= 30:
+        short_score -= 8
+        short_reasons.append(f"⚠️ RSI={rsi:.0f} 超賣區，SHORT 扣分")
+
+    # ── 量能（15分，多空共享）──
     volume_ratio = _number(features.get("vol_ratio"), 1.0)
     volume_points = (
         15 if volume_ratio >= 2.0 else
@@ -134,6 +158,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         long_reasons.append("量能確認")
         short_reasons.append("量能確認")
 
+    # ── 布林位置（10分）──
     bb_position = str(features.get("bb_position") or "middle")
     long_score += {
         "upper_half": 10, "above_upper": 4,
@@ -144,13 +169,37 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         "upper_half": 5, "above_upper": 2,
     }.get(bb_position, 5)
 
+    # ── v2：距近期高點過近時 LONG 額外扣分（高位追漲風險）──
+    price = _number(features.get("price"))
+    recent_high = _number(features.get("recent_high"))
+    recent_low = _number(features.get("recent_low"))
+    if price > 0 and recent_high > 0:
+        pct_from_high = (price - recent_high) / recent_high * 100
+        if pct_from_high >= -3:
+            long_score -= 12
+            long_reasons.append(f"⚠️ 距高點僅 {pct_from_high:.1f}%，高位追漲扣分")
+        elif pct_from_high >= -5:
+            long_score -= 6
+            long_reasons.append(f"距高點 {pct_from_high:.1f}%，輕微高位風險")
+
+    # ── v2：距近期低點過近時 SHORT 額外扣分（低位追空風險）──
+    if price > 0 and recent_low > 0:
+        pct_from_low = (price - recent_low) / recent_low * 100
+        if pct_from_low <= 3:
+            short_score -= 12
+            short_reasons.append(f"⚠️ 距低點僅 {pct_from_low:.1f}%，低位追空扣分")
+        elif pct_from_low <= 5:
+            short_score -= 6
+            short_reasons.append(f"距低點 {pct_from_low:.1f}%，輕微低位風險")
+
+    # ── OI 變化（5分）──
     oi_change = features.get("oi_change_24h")
     if oi_change is not None:
         oi_points = 5 if _number(oi_change) >= 20 else 3 if _number(oi_change) >= 5 else 0
         long_score += oi_points
         short_score += oi_points
 
-    # analyze_coin exposes funding as a percentage, e.g. 0.01 means 0.01%.
+    # ── 資金費率調整 ──
     funding = _number(features.get("funding_rate"))
     if funding >= 0.10:
         long_score -= 5
@@ -168,10 +217,11 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     direction = "LONG" if long_score > short_score else "SHORT"
     veto_reason = None
 
+    # v2：多空差距門檻從 12 提高到 15
     if best < 55:
         direction = "WATCH"
         veto_reason = "方向強度不足"
-    elif gap < 12:
+    elif gap < 15:
         direction = "WATCH"
         veto_reason = "多空分數過於接近"
     elif direction == "LONG" and rsi >= 80:
@@ -184,7 +234,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         direction = "WATCH"
         veto_reason = "量能不足"
 
-    selected_score = best if direction != "WATCH" else best
+    selected_score = best
     confidence = "高" if best >= 75 and gap >= 20 else "中" if best >= 60 else "低"
     reasons = long_reasons if direction == "LONG" else short_reasons if direction == "SHORT" else []
 
@@ -238,10 +288,15 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
 
 
 def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply the rule decision as authority and allow AI only to confirm/veto."""
+    """Apply the rule decision as authority and allow AI only to confirm/veto.
+
+    v2：AI 失效（model=rules）時強制 WATCH + 熔斷標記，
+    避免純規則式評分偽裝成 AI 確認訊號繼續推播。
+    """
     result = dict(ai_result or {})
     ai_direction = str(result.get("direction", "WATCH")).upper()
     ai_score = int(max(0, min(100, round(_number(result.get("score"), 50)))))
+    ai_model = str(result.get("model", "unknown"))
     rule_direction = rule_decision.get("direction", "WATCH")
     rule_score = int(rule_decision.get("selected_score", 0))
 
@@ -256,6 +311,14 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         "feature_hash": rule_decision.get("feature_hash"),
         "strategy_version": rule_decision.get("strategy_version", STRATEGY_VERSION),
     })
+
+    # v2：AI 失效熔斷 — 純規則式不算 AI 確認，強制 WATCH
+    if ai_model == "rules":
+        result["direction"] = "WATCH"
+        result["score"] = min(rule_score, 50)  # 分數壓到50以下
+        result["arbiter_reason"] = "⚠️ AI 失效中，純規則式評分不推播"
+        result["ai_circuit_breaker"] = True
+        return result
 
     if rule_direction == "WATCH":
         result["direction"] = "WATCH"
