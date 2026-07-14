@@ -11,8 +11,11 @@ v2 改動：
 
 v3 改動：
 5. build_trade_levels 入場價改用現價±%，不再追近期高低點
-   做多：entry_zone = 現價 * 1.002，entry_limit = 現價 * 0.995
-   做空：entry_zone = 現價 * 0.998，entry_limit = 現價 * 1.005
+
+v4 改動：
+6. 24H 漲幅超過 15% 的幣 LONG 直接 WATCH（禁止追高）
+7. LONG 訊號要求價格從近期高點回調至少 5% 才允許推送
+8. SHORT 訊號要求價格從近期低點反彈至少 5% 才允許推送
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ import json
 import math
 from typing import Any, Dict
 
-STRATEGY_VERSION = "lana-direction-v3"
+STRATEGY_VERSION = "lana-direction-v4"
 
 def _number(value: Any, default: float = 0.0) -> float:
     try:
@@ -32,7 +35,6 @@ def _number(value: Any, default: float = 0.0) -> float:
         return default
 
 def _canonical_features(features: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only stable strategy inputs and round floats for repeatable hashes."""
     keys = (
         "coin", "timeframe", "candle_close_ts", "price", "change_24h",
         "ma7", "ma30", "ma120", "rsi", "vol_ratio", "bb_position",
@@ -67,6 +69,35 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     long_reasons = []
     short_reasons = []
 
+    price = _number(features.get("price"))
+    change = _number(features.get("change_24h"))
+    recent_high = _number(features.get("recent_high"))
+    recent_low = _number(features.get("recent_low"))
+    rsi = _number(features.get("rsi"), 50.0)
+
+    # ── v4 前置過濾：24H 漲幅過大禁止 LONG ──
+    long_blocked = False
+    short_blocked = False
+    long_block_reason = None
+    short_block_reason = None
+
+    if change >= 15:
+        long_blocked = True
+        long_block_reason = f"24H 已漲 {change:.1f}%，禁止追高"
+
+    # ── v4 前置過濾：位置過濾（回調不足禁止進場）──
+    if price > 0 and recent_high > 0:
+        pct_from_high = (price - recent_high) / recent_high * 100
+        if pct_from_high > -5:  # 距高點不足 5%
+            long_blocked = True
+            long_block_reason = long_block_reason or f"距高點僅 {pct_from_high:.1f}%，回調不足禁止 LONG"
+
+    if price > 0 and recent_low > 0:
+        pct_from_low = (price - recent_low) / recent_low * 100
+        if pct_from_low < 5:  # 距低點不足 5%
+            short_blocked = True
+            short_block_reason = f"距低點僅 {pct_from_low:.1f}%，反彈不足禁止 SHORT"
+
     # ── MA 趨勢（35分）──
     ma7 = _number(features.get("ma7"))
     ma30 = _number(features.get("ma30"))
@@ -94,7 +125,6 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
             short_reasons.append("短均線偏空（長均線不足）")
 
     # ── 動能（24H 漲跌幅，20分）──
-    change = _number(features.get("change_24h"))
     momentum_points = (
         20 if abs(change) >= 15 else
         16 if abs(change) >= 8 else
@@ -108,8 +138,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         short_score += momentum_points
         short_reasons.append(f"24H 負動能 {change:+.1f}%")
 
-    # ── RSI（15分）── v2：超買區對 LONG 施加懲罰
-    rsi = _number(features.get("rsi"), 50.0)
+    # ── RSI（15分）──
     if 50 <= rsi < 68:
         long_score += 15
         long_reasons.append("RSI 多方健康區")
@@ -119,7 +148,6 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         long_score += 5
         long_reasons.append("RSI 超賣反彈候選")
 
-    # v2：RSI > 70 對 LONG 施加懲罰（追高風險）
     if rsi >= 75:
         long_score -= 15
         long_reasons.append(f"⚠️ RSI={rsi:.0f} 嚴重超買，LONG 扣分")
@@ -136,7 +164,6 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         short_score += 5
         short_reasons.append("RSI 超買回落候選")
 
-    # v2：RSI < 30 對 SHORT 施加懲罰（超賣反彈風險）
     if rsi <= 25:
         short_score -= 15
         short_reasons.append(f"⚠️ RSI={rsi:.0f} 嚴重超賣，SHORT 扣分")
@@ -169,11 +196,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         "upper_half": 5, "above_upper": 2,
     }.get(bb_position, 5)
 
-    # ── v2：距近期高點過近時 LONG 額外扣分（高位追漲風險）──
-    price = _number(features.get("price"))
-    recent_high = _number(features.get("recent_high"))
-    recent_low = _number(features.get("recent_low"))
-
+    # ── 距高低點扣分（v2保留）──
     if price > 0 and recent_high > 0:
         pct_from_high = (price - recent_high) / recent_high * 100
         if pct_from_high >= -3:
@@ -183,7 +206,6 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
             long_score -= 6
             long_reasons.append(f"距高點 {pct_from_high:.1f}%，輕微高位風險")
 
-    # ── v2：距近期低點過近時 SHORT 額外扣分（低位追空風險）──
     if price > 0 and recent_low > 0:
         pct_from_low = (price - recent_low) / recent_low * 100
         if pct_from_low <= 3:
@@ -219,8 +241,14 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     direction = "LONG" if long_score > short_score else "SHORT"
     veto_reason = None
 
-    # v2：多空差距門檻從 12 提高到 15
-    if best < 55:
+    # ── v4：前置封鎖優先判斷 ──
+    if direction == "LONG" and long_blocked:
+        direction = "WATCH"
+        veto_reason = long_block_reason
+    elif direction == "SHORT" and short_blocked:
+        direction = "WATCH"
+        veto_reason = short_block_reason
+    elif best < 55:
         direction = "WATCH"
         veto_reason = "方向強度不足"
     elif gap < 15:
@@ -256,13 +284,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, float]:
-    """建立進出場價位：基於現價計算，不追近期高低點。
-
-    v3 改動：入場價改用現價±%，確保訊號發出時即可執行。
-    做多：entry_zone = 現價 * 1.002（現價上方小突破），entry_limit = 現價 * 0.995（等回調掛單）
-    做空：entry_zone = 現價 * 0.998（現價下方小跌破），entry_limit = 現價 * 1.005（等反彈掛單）
-    止損用 ATR * 1.5 或結構低/高點，最多 5%。
-    """
+    """建立進出場價位：基於現價計算（v3起）。"""
     price = _number(features.get("price"))
     if price <= 0 or direction not in ("LONG", "SHORT"):
         return {
@@ -278,25 +300,16 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
     max_distance = price * 0.05
 
     if direction == "LONG":
-        # v3：現價上方 0.2%（小突破確認，立即可追）
         entry_breakout = round(price * 1.002, 10)
-        # 限價備選：現價下方 0.5%（等小回調）
         entry_limit = round(price * 0.995, 10)
-
-        # 止損：近期低點下方 0.2% 或 ATR*1.5，取較近的
         raw_stop = min(price - 1.5 * atr_value, recent_low * 0.998)
         distance = max(min_distance, min(max_distance, price - raw_stop))
         stop = price - distance
         target_1 = price + distance
         target_2 = price + 2 * distance
-
-    else:  # SHORT
-        # v3：現價下方 0.2%（小跌破確認，立即可追）
+    else:
         entry_breakout = round(price * 0.998, 10)
-        # 限價備選：現價上方 0.5%（等小反彈）
         entry_limit = round(price * 1.005, 10)
-
-        # 止損：近期高點上方 0.2% 或 ATR*1.5，取較近的
         raw_stop = max(price + 1.5 * atr_value, recent_high * 1.002)
         distance = max(min_distance, min(max_distance, raw_stop - price))
         stop = price + distance
@@ -304,19 +317,15 @@ def build_trade_levels(features: Dict[str, Any], direction: str) -> Dict[str, fl
         target_2 = price - 2 * distance
 
     return {
-        "entry_zone": entry_breakout,   # 現價附近突破確認入場價
-        "entry_limit": entry_limit,      # 限價備選（回調/反彈掛單）
+        "entry_zone": entry_breakout,
+        "entry_limit": entry_limit,
         "stop_loss": round(stop, 10),
         "target_1": round(target_1, 10),
         "target_2": round(target_2, 10),
     }
 
 def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply the rule decision as authority and allow AI only to confirm/veto.
-
-    v2：AI 失效（model=rules）時強制 WATCH + 熔斷標記，
-    避免純規則式評分偽裝成 AI 確認訊號繼續推播。
-    """
+    """Apply the rule decision as authority and allow AI only to confirm/veto."""
     result = dict(ai_result or {})
     ai_direction = str(result.get("direction", "WATCH")).upper()
     ai_score = int(max(0, min(100, round(_number(result.get("score"), 50)))))
@@ -337,7 +346,6 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         "strategy_version": rule_decision.get("strategy_version", STRATEGY_VERSION),
     })
 
-    # v2：AI 失效警告模式
     if ai_model == "rules":
         result["ai_circuit_breaker"] = True
         result["ai_warning"] = "⚠️ AI 目前失效，以下為規則式評分，請勿實單操作"
@@ -345,7 +353,6 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         result["stop_loss"] = 0.0
         result["target_1"] = 0.0
         result["target_2"] = 0.0
-
         if rule_direction == "WATCH":
             result["direction"] = "WATCH"
             result["score"] = rule_score
