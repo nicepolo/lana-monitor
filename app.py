@@ -1208,7 +1208,7 @@ def api_email():
     subject = body.get("subject", "[LANA] 分析報告")
     text    = body.get("text", "")
     try:
-        resend_key = os.environ.get("RESEND_KEY", "re_e8vfjUR6_2svn3PJAnp8Q3VD5jtu8Xwjn")
+        resend_key = os.environ.get("RESEND_KEY", "")
         resp = requests.post(
             "https://api.resend.com/emails",
             headers={
@@ -2589,6 +2589,65 @@ def telegram_webhook():
                         "entry_beyond_stop": "成交價已越過原始止損，請直接重新評估或平倉。",
                     }
                     _tg_send(chat_id, "⚠️ " + labels.get(reason, reason))
+
+        elif text.startswith("/track "):
+            # /track COIN LONG|SHORT 進場價 止損價 目標1 目標2
+            # 例：/track AEVO LONG 0.01984 0.01850 0.02045 0.02142
+            parts = text.split()
+            usage = "格式：<code>/track AEVO LONG 0.01984 0.01850 0.02045 0.02142</code>"
+            if len(parts) != 7:
+                _tg_send(chat_id, "⚠️ 參數錯誤。\n" + usage)
+            elif TELEGRAM_CHAT_ID and chat_id != str(TELEGRAM_CHAT_ID):
+                _tg_send(chat_id, "⚠️ 無權操作持倉助手。")
+            else:
+                try:
+                    _, coin, direction, entry_str, stop_str, tp1_str, tp2_str = parts
+                    coin = coin.upper()
+                    direction = direction.upper()
+                    if direction not in ("LONG", "SHORT"):
+                        raise ValueError("方向必須是 LONG 或 SHORT")
+                    entry_p = float(entry_str)
+                    stop_p  = float(stop_str)
+                    tp1_p   = float(tp1_str)
+                    tp2_p   = float(tp2_str)
+                    import hashlib as _hs
+                    fake_signal_id = _hs.sha256(f"manual|{coin}|{direction}|{entry_str}".encode()).hexdigest()[:24]
+                    manual_signal = {
+                        "coin": coin,
+                        "direction": direction,
+                        "signal_id": fake_signal_id,
+                        "strategy_version": "manual",
+                        "entry_zone": entry_p,
+                        "actual_entry_price": entry_p,
+                        "stop_loss": stop_p,
+                        "target_1": tp1_p,
+                        "target_2": tp2_p,
+                        "exchange": POSITION_DEFAULT_EXCHANGE,
+                    }
+                    store = _load_positions()
+                    position, reason = open_manual_position(store, manual_signal)
+                    if position and reason == "tracking_started":
+                        _save_positions(store)
+                        _tg_send(
+                            chat_id,
+                            "✅ 已手動建立持倉追蹤（不會自動下單）\n\n" + _position_text(position),
+                            reply_markup={"inline_keyboard": [[
+                                {"text": "📊 查看持倉", "callback_data": "positions_status"},
+                                {"text": "🏁 已平倉", "callback_data": f"position_close:{position['position_id']}"},
+                            ]]},
+                        )
+                    elif position and reason == "already_tracking":
+                        _tg_send(chat_id, "ℹ️ 這筆持倉已在追蹤中。\n\n" + _position_text(position))
+                    else:
+                        labels = {
+                            "coin_already_tracking": "同一幣種已有持倉在追蹤，請先標記已平倉。",
+                            "invalid_levels": "價格層級不合理，請確認止損/目標方向正確。",
+                        }
+                        _tg_send(chat_id, "⚠️ 無法建立持倉：" + labels.get(reason, reason))
+                except ValueError as ve:
+                    _tg_send(chat_id, f"⚠️ {ve}\n" + usage)
+                except Exception as te:
+                    _tg_send(chat_id, f"⚠️ 建立持倉失敗：{te}")
 
         return jsonify({"ok": True})
 
