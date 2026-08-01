@@ -16,6 +16,11 @@ v4 改動：
 6. 24H 漲幅超過 15% 的幣 LONG 直接 WATCH（禁止追高）
 7. LONG 訊號要求價格從近期高點回調至少 5% 才允許推送
 8. SHORT 訊號要求價格從近期低點反彈至少 5% 才允許推送
+
+v5 改動（優化高分陷阱）：
+9. 高分主要來自「漲幅動能」時降權：24H漲幅 > 20% 且分數 > 85 → WATCH
+10. 回調門檻從 -5% 拉嚴到 -8%（LONG 需從高點回調更多才允許進場）
+11. 高分（>85）時 AI 門檻提高，需 AI 評分 ≥ 75 才推送（在 trigger.py 實施）
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ import json
 import math
 from typing import Any, Dict
 
-STRATEGY_VERSION = "lana-direction-v4"
+STRATEGY_VERSION = "lana-direction-v5"
 
 def _number(value: Any, default: float = 0.0) -> float:
     try:
@@ -75,7 +80,7 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     recent_low = _number(features.get("recent_low"))
     rsi = _number(features.get("rsi"), 50.0)
 
-    # ── v4 前置過濾：24H 漲幅過大禁止 LONG ──
+    # ── v4/v5 前置過濾：24H 漲幅過大禁止 LONG ──
     long_blocked = False
     short_blocked = False
     long_block_reason = None
@@ -85,16 +90,19 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         long_blocked = True
         long_block_reason = f"24H 已漲 {change:.1f}%，禁止追高"
 
-    # ── v4 前置過濾：位置過濾（回調不足禁止進場）──
+    # ── v5 新增：距高點回調門檻從 5% 拉嚴到 8% ──
+    pct_from_high = 0.0
+    pct_from_low = 0.0
+
     if price > 0 and recent_high > 0:
         pct_from_high = (price - recent_high) / recent_high * 100
-        if pct_from_high > -5:  # 距高點不足 5%
+        if pct_from_high > -8:  # v5: 從 -5% 拉嚴到 -8%
             long_blocked = True
-            long_block_reason = long_block_reason or f"距高點僅 {pct_from_high:.1f}%，回調不足禁止 LONG"
+            long_block_reason = long_block_reason or f"距高點僅 {pct_from_high:.1f}%，回調不足禁止 LONG（需回調 ≥8%）"
 
     if price > 0 and recent_low > 0:
         pct_from_low = (price - recent_low) / recent_low * 100
-        if pct_from_low < 5:  # 距低點不足 5%
+        if pct_from_low < 5:
             short_blocked = True
             short_block_reason = f"距低點僅 {pct_from_low:.1f}%，反彈不足禁止 SHORT"
 
@@ -198,16 +206,14 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── 距高低點扣分（v2保留）──
     if price > 0 and recent_high > 0:
-        pct_from_high = (price - recent_high) / recent_high * 100
         if pct_from_high >= -3:
             long_score -= 12
             long_reasons.append(f"⚠️ 距高點僅 {pct_from_high:.1f}%，高位追漲扣分")
-        elif pct_from_high >= -5:
+        elif pct_from_high >= -8:  # v5: 從 -5% 擴展到 -8%
             long_score -= 6
             long_reasons.append(f"距高點 {pct_from_high:.1f}%，輕微高位風險")
 
     if price > 0 and recent_low > 0:
-        pct_from_low = (price - recent_low) / recent_low * 100
         if pct_from_low <= 3:
             short_score -= 12
             short_reasons.append(f"⚠️ 距低點僅 {pct_from_low:.1f}%，低位追空扣分")
@@ -241,7 +247,13 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
     direction = "LONG" if long_score > short_score else "SHORT"
     veto_reason = None
 
-    # ── v4：前置封鎖優先判斷 ──
+    # ── v5 新增：高分主要來自漲幅動能 → 降為 WATCH ──
+    # 動能最多貢獻 20 分，如果漲幅 > 20% 且總分 > 85，代表高分主因是追漲
+    if direction == "LONG" and change >= 20 and best > 85:
+        long_blocked = True
+        long_block_reason = long_block_reason or f"24H 漲幅 {change:.1f}% 過高，高分({best})主因為追漲動能，降為觀望"
+
+    # ── v4/v5：前置封鎖優先判斷 ──
     if direction == "LONG" and long_blocked:
         direction = "WATCH"
         veto_reason = long_block_reason
@@ -279,6 +291,8 @@ def score_direction(features: Dict[str, Any]) -> Dict[str, Any]:
         "veto_reason": veto_reason,
         "strategy_version": STRATEGY_VERSION,
         "feature_hash": feature_hash(features),
+        # v5 新增：標記高分是否由漲幅主導（供 trigger.py 判斷 AI 門檻）
+        "momentum_dominated": change >= 20 and best > 80,
     }
     result["signal_id"] = make_signal_id(features)
     return result
@@ -344,6 +358,7 @@ def arbitrate_ai_result(rule_decision: Dict[str, Any], ai_result: Dict[str, Any]
         "signal_id": rule_decision.get("signal_id"),
         "feature_hash": rule_decision.get("feature_hash"),
         "strategy_version": rule_decision.get("strategy_version", STRATEGY_VERSION),
+        "momentum_dominated": rule_decision.get("momentum_dominated", False),
     })
 
     if ai_model == "rules":
