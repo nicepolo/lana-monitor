@@ -2207,6 +2207,35 @@ def _do_ai_analyze(coin, price=0, change24h=0, force=False, manual_reanalyze=Fal
                   "entry_zone": 0, "stop_loss": 0, "target_1": 0, "target_2": 0,
                   "timeframe": "N/A", "risk_note": "規則模式僅供模擬驗證，請嚴格遵守止損。"}
 
+    # ── v5.2 BTC 牛熊市封鎖（在 arbitrate 前判斷）──
+    try:
+        _btc_chg = _get_btc_change() if not manual_reanalyze else 0
+        _rd = rule_decision.get("direction", "WATCH")
+        if _btc_chg >= 3 and _rd == "SHORT":
+            log.info(f"[ai_analyze] BTC +{_btc_chg:.1f}% 牛市，封鎖 {coin} SHORT → WATCH")
+            return {
+                "direction": "WATCH", "score": 0,
+                "model": "btc_veto", "signal_id": rule_decision.get("signal_id"),
+                "summary": f"BTC 24H +{_btc_chg:.1f}% 牛市環境，封鎖空單",
+                "reason": "牛市不做空，等 BTC 回落再評估",
+                "long_score": rule_decision.get("long_score", 0),
+                "short_score": rule_decision.get("short_score", 0),
+                "btc_veto": True,
+            }
+        elif _btc_chg <= -3 and _rd == "LONG":
+            log.info(f"[ai_analyze] BTC {_btc_chg:.1f}% 熊市，封鎖 {coin} LONG → WATCH")
+            return {
+                "direction": "WATCH", "score": 0,
+                "model": "btc_veto", "signal_id": rule_decision.get("signal_id"),
+                "summary": f"BTC 24H {_btc_chg:.1f}% 熊市環境，封鎖多單",
+                "reason": "熊市不做多，等 BTC 反彈再評估",
+                "long_score": rule_decision.get("long_score", 0),
+                "short_score": rule_decision.get("short_score", 0),
+                "btc_veto": True,
+            }
+    except Exception as _btc_err:
+        log.warning(f"[ai_analyze] BTC 封鎖檢查失敗: {_btc_err}")
+
     result = arbitrate_ai_result(rule_decision, result)
     result = apply_entry_guard(result)
     level_features = {
