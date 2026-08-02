@@ -1115,6 +1115,24 @@ def _quick_score_one(coin):
 @app.route("/api/scan", methods=["GET", "POST"])
 def api_scan():
     try:
+        # ── v5.1 新增：抓 BTC 24H 漲幅，牛市封鎖 SHORT ──
+        btc_change_24h = 0.0
+        btc_market_mode = "neutral"  # bull / bear / neutral
+        try:
+            btc_r = requests.get(
+                "https://www.okx.com/api/v5/market/ticker",
+                params={"instId": "BTC-USDT-SWAP"}, timeout=8)
+            btc_d = btc_r.json().get("data", [{}])[0]
+            btc_last = float(btc_d.get("last", 0))
+            btc_open = float(btc_d.get("open24h", btc_last))
+            btc_change_24h = ((btc_last - btc_open) / btc_open * 100) if btc_open else 0
+            if btc_change_24h >= 3:
+                btc_market_mode = "bull"
+            elif btc_change_24h <= -3:
+                btc_market_mode = "bear"
+        except Exception as btc_err:
+            log.warning(f"BTC 市場判斷失敗: {btc_err}")
+
         data = fetch_market_scan()
         wl = load_watchlist()
         # 觀察名單幣強制出現（即使漲幅低於門檻）
@@ -1148,11 +1166,23 @@ def api_scan():
         for d in data:
             if d['coin'] in score_map:
                 d.update(score_map[d['coin']])
+        # ── v5.1：牛市封鎖 SHORT，熊市封鎖 LONG ──
+        for d in data:
+            rd = d.get("rule_direction", "WATCH")
+            if btc_market_mode == "bull" and rd == "SHORT":
+                d["rule_direction"] = "WATCH"
+                d["btc_veto"] = f"BTC 24H +{btc_change_24h:.1f}% 牛市，封鎖 SHORT"
+            elif btc_market_mode == "bear" and rd == "LONG":
+                d["rule_direction"] = "WATCH"
+                d["btc_veto"] = f"BTC 24H {btc_change_24h:.1f}% 熊市，封鎖 LONG"
+
         # 觀察名單置頂
         wl_set = set(wl)
         data.sort(key=lambda x: (0 if x['coin'] in wl_set else 1, -x['change']))
         return jsonify({"ok": True, "data": data,
                         "watchlist": wl,
+                        "btc_change_24h": round(btc_change_24h, 2),
+                        "btc_market_mode": btc_market_mode,
                         "ts": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
